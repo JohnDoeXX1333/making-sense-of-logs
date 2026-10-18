@@ -4,3 +4,4 @@ backend/cache/
 frontend/dist/
 .env
 *.log
+demo/out/

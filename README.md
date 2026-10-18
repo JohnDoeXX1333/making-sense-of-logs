@@ -74,6 +74,10 @@ scripts/smoke.sh                       # end-to-end checks against the running b
 
 API: `GET /api/health`, `GET /api/examples`, `GET /api/datasets`, `POST /api/datasets/detect` (text/plain body), `POST /api/datasets/:id/ingest`, `GET /api/datasets/:id/overview`, `GET /api/datasets/:id/lines`, `POST /api/investigate {"question": "..."}` (`?fresh=1` skips the answer cache) and `POST /api/investigate/stream?first=<role>`, which streams newline-delimited JSON events: each finished query, the evidence bundle, then each role view (the selected role first). The contract is in `shared/contract.ts`.
 
+## Demo video
+
+`demo/record.py` records each scene from the running app with Playwright (1080p, visible cursor, timestamped markers); `demo/build.py` speeds up the waiting parts (labelled on screen), adds title and end cards and burned-in English captions, and writes `demo/out/demo.mp4` (1920x1080, 30 fps, H.264, BT.709, silent audio track).
+
 ## Data
 
 - Loghub BGL, Zenodo record 8196385, `BGL.zip` md5 `4452953c470f2d95fcb32d5f6e733f7a`, 4,747,963 lines, 348,460 alert lines in 41 categories.
