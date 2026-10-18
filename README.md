@@ -4,6 +4,42 @@ National AI Hackathon 2026, SereneDB challenge "Making Sense of Logs: The Right 
 
 Ask one question about 4.7 million Blue Gene/L supercomputer log lines. SereneDB finds the evidence and computes the numbers; an AI agent explains the same evidence for an engineer (what failed and when), a team lead (what keeps coming back and where) and a manager (what to prioritise and what the logs cannot prove). Every claim links back to the exact log rows and the SQL that produced it.
 
+**[Demo video (2:46)](https://github.com/JohnDoeXX1333/making-sense-of-logs/releases/download/demo-2026-10-18/demo.mp4)** · **[Slides (PDF)](docs/slides/making-sense-of-logs.pdf)** · [Run it](#run-it)
+
+![Selecting a week on the chart compares it with the week before](docs/readme/period.gif)
+
+*Drag across the chart to pick a period: SereneDB compares it with the previous period of the same length, and the takeaways are written from the numbers, without AI.*
+
+## One investigation, three perspectives
+
+The question "What happened around the runtime panics at 14:03 on 2005-07-11?" produces one set of facts from SereneDB and three explanations of it. The evidence column on the right is identical in all three.
+
+| Engineer: what failed, and what came first | Team lead: what keeps coming back |
+|---|---|
+| ![Engineer view](docs/readme/engineer.jpg) | ![Team lead view](docs/readme/teamlead.jpg) |
+| A power-off on midplane R05-M0 at 14:03:23; ten seconds later 148 nodes panic on three other midplanes. The logs show the order, not the cause. | The same facts, framed as recurrence and concentration. A number the model writes that is not in the evidence is marked **inferred** by the server. |
+
+| Manager: what to prioritise | Every claim opens its proof |
+|---|---|
+| ![Manager view with priority table](docs/readme/manager.jpg) | ![Evidence drawer with log lines and SQL](docs/readme/drawer.jpg) |
+| Plain language and a priority score from a visible formula over database counts, not an AI guess. | Each fact id opens the source log lines and the exact SQL, with row count and time. |
+
+![Trace of the queries the agent chose](docs/readme/trace.jpg)
+
+*"How this answer was built": the question, the read-only queries the agent chose (with row counts and milliseconds), the evidence bundle and the three views.*
+
+## For non-experts, and for any log file
+
+| SQL-only overview with key takeaways | Upload your own logs |
+|---|---|
+| ![Overview with KPI tiles and takeaways](docs/readme/overview.jpg) | ![Upload dialog with detected format and preview](docs/readme/upload_preview.jpg) |
+| KPI tiles and takeaways written by rules from SQL results, plus breakdowns by level, component and node. Click any bar or pattern for the raw lines. | The model proposes a parser from 40 lines; the server tests it on 2,000 lines before loading. Here an SSH server log it had never seen: 100% of lines matched. |
+
+| What changed compared with the previous period | A dashboard for the uploaded file |
+|---|---|
+| ![Categories and nodes that grew](docs/readme/insights.jpg) | ![Dashboard of the uploaded OpenSSH log](docs/readme/upload_dashboard.jpg) |
+| Categories and nodes that grew, with "first seen" badges, each one click away from its lines. | The same overview, takeaways and three-role investigation work on the uploaded data. |
+
 ## How it works
 
 ```mermaid
