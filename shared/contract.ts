@@ -101,6 +101,16 @@ export interface InvestigateResponse {
   cachedAt?: string; // ISO time when this answer was computed, present only when served from cache
 }
 
+// POST /api/investigate/stream?first=<role>  body: InvestigateRequest
+// Response: application/x-ndjson, one InvestigateEvent per line, in this order:
+// tool* -> bundle -> view x3 (selected role requested first) -> done. "error" can replace the rest.
+export type InvestigateEvent =
+  | { type: "tool"; call: ToolCall }
+  | { type: "bundle"; bundle: EvidenceBundle }
+  | { type: "view"; role: Role; view: RoleView | { role: Role; error: string } }
+  | { type: "done"; response: InvestigateResponse }
+  | { type: "error"; error: string };
+
 export interface Health {
   ok: boolean;
   serenedbVersion: string;

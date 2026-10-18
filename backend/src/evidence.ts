@@ -8,9 +8,16 @@ export class Evidence {
   unknowns: string[] = [];
   searchMode: "bm25" | "match" = "bm25";
 
+  private onToolCall?: (call: ToolCall) => void;
+
+  constructor(onToolCall?: (call: ToolCall) => void) {
+    this.onToolCall = onToolCall;
+  }
+
   addToolCall(call: Omit<ToolCall, "id">): ToolCall {
     const full = { id: `T${this.toolCalls.length + 1}`, ...call };
     this.toolCalls.push(full);
+    this.onToolCall?.(full);
     return full;
   }
 

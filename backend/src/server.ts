@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import Fastify from "fastify";
 import { z } from "zod";
-import type { ExampleQuestion, Health, InvestigateResponse } from "../../shared/contract.ts";
-import { investigate, loadDatasetSummary } from "./agent.ts";
+import type { ExampleQuestion, Health, InvestigateEvent, InvestigateResponse, Role } from "../../shared/contract.ts";
+import { investigate, loadDatasetSummary, type Emit } from "./agent.ts";
 import { query } from "./db.ts";
 
 const EXAMPLES: ExampleQuestion[] = [
@@ -38,11 +38,16 @@ const cache = new Map<string, InvestigateResponse>(
 );
 const cacheKey = (q: string) => q.toLowerCase().replace(/\s+/g, " ").trim();
 
-async function answer(question: string, fresh: boolean): Promise<InvestigateResponse> {
+async function answer(question: string, fresh: boolean, emit: Emit = () => {}, firstRole: Role = "engineer"): Promise<InvestigateResponse> {
   const key = cacheKey(question);
   const hit = cache.get(key);
-  if (hit && !fresh) return hit;
-  const result = await investigate(question);
+  if (hit && !fresh) {
+    for (const call of hit.bundle.toolCalls) emit({ type: "tool", call });
+    emit({ type: "bundle", bundle: hit.bundle });
+    for (const role of [firstRole, ...ROLE_IDS.filter((r) => r !== firstRole)]) emit({ type: "view", role, view: hit.views[role] });
+    return hit;
+  }
+  const result = await investigate(question, emit, firstRole);
   const failed = Object.values(result.views).some((v) => "error" in v);
   if (!failed) {
     cache.set(key, { ...result, cachedAt: new Date().toISOString() });
@@ -56,6 +61,27 @@ app.post<{ Querystring: { fresh?: string } }>("/api/investigate", async (req, re
   const parsed = Body.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: z.prettifyError(parsed.error) });
   return answer(parsed.data.question, req.query.fresh === "1");
+});
+
+const ROLE_IDS: Role[] = ["engineer", "team_lead", "manager"];
+
+// Same investigation as /api/investigate, streamed as newline-delimited JSON events.
+app.post<{ Querystring: { fresh?: string; first?: string } }>("/api/investigate/stream", async (req, reply) => {
+  const parsed = Body.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: z.prettifyError(parsed.error) });
+  const first = ROLE_IDS.find((r) => r === req.query.first) ?? "engineer";
+  reply.hijack();
+  reply.raw.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" });
+  const send = (event: InvestigateEvent) => {
+    if (!reply.raw.writableEnded) reply.raw.write(`${JSON.stringify(event)}\n`);
+  };
+  try {
+    const response = await answer(parsed.data.question, req.query.fresh === "1", send, first);
+    send({ type: "done", response });
+  } catch (err) {
+    send({ type: "error", error: (err as Error).message });
+  }
+  reply.raw.end();
 });
 
 await loadDatasetSummary();

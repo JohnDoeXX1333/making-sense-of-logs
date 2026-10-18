@@ -49,6 +49,21 @@ for role,v in d["views"].items():
             raise AssertionError((role, f))
 ' "$r" && pass "unanswerable: unknowns present, no observed cost or customer claim" || fail "unanswerable"
 
+# Stream: events arrive as tool* -> bundle -> 3 views (selected role first) -> done, with the same facts as the JSON endpoint.
+s=$(curl -sf -X POST "$API/api/investigate/stream?first=manager" -H 'Content-Type: application/json' -d '{"question": "What happened around the runtime panics at 14:03 on 2005-07-11? Which nodes failed and what came right before?"}')
+python3 -I -c '
+import json,sys
+ev=[json.loads(l) for l in sys.argv[1].splitlines() if l.strip()]
+types=[e["type"] for e in ev]
+b=types.index("bundle")
+assert all(t=="tool" for t in types[:b]) and b>0, types
+assert types[b+1:]==["view","view","view","done"], types
+assert ev[b+1]["role"]=="manager", ev[b+1]["role"]
+facts=[(f["statement"],f.get("value")) for f in ev[-1]["response"]["bundle"]["facts"]]
+ref=[(f["statement"],f.get("value")) for f in json.loads(sys.argv[2])["bundle"]["facts"]]
+assert facts==ref
+' "$s" "$r2" && pass "stream: tool events, bundle, manager view first, done with identical facts" || fail "stream"
+
 # Bad input is rejected.
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/investigate" -H 'Content-Type: application/json' -d '{"question": ""}')
 [ "$code" = "400" ] && pass "empty question rejected with 400" || fail "empty question returned $code"

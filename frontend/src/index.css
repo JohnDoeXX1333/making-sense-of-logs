@@ -297,3 +297,4 @@ pre.sql { margin: 0; background: var(--canvas); border: 1px solid var(--border);
   .call .args { grid-column: 2 / -1; white-space: normal; }
   .chip { min-height: 44px; }
 }
+.call:disabled { cursor: default; }

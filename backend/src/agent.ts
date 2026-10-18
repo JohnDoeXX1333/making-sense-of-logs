@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { Finding, InvestigateResponse, LogRow, Role, RoleView } from "../../shared/contract.ts";
+import type { EvidenceBundle, Finding, InvestigateEvent, InvestigateResponse, LogRow, Role, RoleView } from "../../shared/contract.ts";
 import { fetchRows, query } from "./db.ts";
 import { Evidence } from "./evidence.ts";
 import { chat, chatJson, type Message } from "./llm.ts";
@@ -183,9 +183,13 @@ Write the answer as JSON. Rules:
   return { view, ms };
 }
 
-export async function investigate(question: string): Promise<InvestigateResponse> {
+export type Emit = (event: InvestigateEvent) => void;
+
+// Runs one investigation. Events are emitted as they happen: each finished query, the evidence bundle,
+// then each role view. The selected role is requested first because the provider handles one request at a time.
+export async function investigate(question: string, emit: Emit = () => {}, firstRole: Role = "engineer"): Promise<InvestigateResponse> {
   const started = performance.now();
-  const ev = new Evidence();
+  const ev = new Evidence((call) => emit({ type: "tool", call }));
   ev.unknowns.push(...STANDARD_UNKNOWNS);
   let plannerMs = 0;
   try {
@@ -199,28 +203,37 @@ export async function investigate(question: string): Promise<InvestigateResponse
   const touched = [...new Set(ev.toolCalls.map((t) => (t.args as { label?: string }).label).filter((l): l is string => !!l))];
   const prio = await priorities(ev, touched);
   const logs = await fetchRows(ev.lineIds());
+  const bundle: EvidenceBundle = {
+    queryId: randomUUID(),
+    question,
+    facts: ev.facts,
+    logs,
+    charts: ev.charts,
+    toolCalls: ev.toolCalls,
+    unknowns: ev.unknowns,
+    searchMode: ev.searchMode,
+  };
+  emit({ type: "bundle", bundle });
 
-  const results = await Promise.allSettled(ROLES.map((role) => writeView(role, question, ev, logs, prio)));
-  const views = Object.fromEntries(
-    ROLES.map((role, i) => {
-      const r = results[i]!;
-      return [role, r.status === "fulfilled" ? r.value.view : { role, error: `Explanation unavailable: ${(r.reason as Error).message}` }];
-    }),
-  ) as InvestigateResponse["views"];
-  const roleMs = Math.max(0, ...results.map((r) => (r.status === "fulfilled" ? r.value.ms : 0)));
+  const order = [firstRole, ...ROLES.filter((r) => r !== firstRole)];
+  const rolesStarted = performance.now();
+  const views = {} as InvestigateResponse["views"];
+  const write = async (role: Role) => {
+    try {
+      views[role] = (await writeView(role, question, ev, logs, prio)).view;
+    } catch (err) {
+      views[role] = { role, error: `Explanation unavailable: ${(err as Error).message}` };
+    }
+    emit({ type: "view", role, view: views[role] });
+  };
+  // The provider does not answer concurrent requests in order, so the selected role goes alone first.
+  await write(order[0]!);
+  await Promise.all(order.slice(1).map(write));
+  const roleMs = Math.round(performance.now() - rolesStarted);
   console.error(JSON.stringify({ msg: "investigate timings", plannerMs, roleMs, toolCalls: ev.toolCalls.length }));
 
   return {
-    bundle: {
-      queryId: randomUUID(),
-      question,
-      facts: ev.facts,
-      logs,
-      charts: ev.charts,
-      toolCalls: ev.toolCalls,
-      unknowns: ev.unknowns,
-      searchMode: ev.searchMode,
-    },
+    bundle,
     views,
     timings: {
       dbMs: ev.toolCalls.reduce((s, t) => s + t.ms, 0),

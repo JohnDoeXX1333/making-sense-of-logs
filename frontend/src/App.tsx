@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { ExampleQuestion, Fact, Finding, Health, InvestigateResponse, LogRow, Role, RoleView, ToolCall } from '../../shared/contract.ts'
+import type { EvidenceBundle, ExampleQuestion, Fact, Finding, Health, InvestigateEvent, InvestigateResponse, LogRow, Role, RoleView, ToolCall } from '../../shared/contract.ts'
 import { Chart } from './Chart.tsx'
 
 const ROLES: { id: Role; name: string; hint: string }[] = [
@@ -120,7 +120,7 @@ function RolePanel({ view, onFact }: { view: RoleView | { role: Role; error: str
 
 type DrawerContent = { kind: 'fact'; fact: Fact } | { kind: 'call'; call: ToolCall }
 
-function Drawer({ content, data, onClose }: { content: DrawerContent | null; data: InvestigateResponse | null; onClose: () => void }) {
+function Drawer({ content, bundle, onClose }: { content: DrawerContent | null; bundle: EvidenceBundle | null; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
   const [openRaw, setOpenRaw] = useState<number | null>(null)
   useEffect(() => {
@@ -129,9 +129,9 @@ function Drawer({ content, data, onClose }: { content: DrawerContent | null; dat
     if (content && !d.open) d.showModal()
     if (!content && d.open) d.close()
   }, [content])
-  if (!data) return <dialog ref={ref} className="drawer" onClose={onClose} />
-  const call = content?.kind === 'call' ? content.call : content ? data.bundle.toolCalls.find((t) => t.id === content.fact.toolCallId) : undefined
-  const rows: LogRow[] = content?.kind === 'fact' ? data.bundle.logs.filter((l) => content.fact.sourceLineIds.includes(l.lineId)) : []
+  if (!bundle) return <dialog ref={ref} className="drawer" onClose={onClose} />
+  const call = content?.kind === 'call' ? content.call : content ? bundle.toolCalls.find((t) => t.id === content.fact.toolCallId) : undefined
+  const rows: LogRow[] = content?.kind === 'fact' ? bundle.logs.filter((l) => content.fact.sourceLineIds.includes(l.lineId)) : []
   return (
     <dialog ref={ref} className="drawer" onClose={onClose} aria-labelledby="drawer-title">
       {content && (
@@ -204,7 +204,10 @@ export default function App() {
   const [examples, setExamples] = useState<ExampleQuestion[]>([])
   const [question, setQuestion] = useState('')
   const [fieldError, setFieldError] = useState('')
-  const [data, setData] = useState<InvestigateResponse | null>(null)
+  const [bundle, setBundle] = useState<EvidenceBundle | null>(null)
+  const [views, setViews] = useState<Partial<InvestigateResponse['views']>>({})
+  const [liveCalls, setLiveCalls] = useState<ToolCall[]>([])
+  const [final, setFinal] = useState<InvestigateResponse | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -237,13 +240,49 @@ export default function App() {
     setLoading(true)
     setElapsed(0)
     setError('')
+    setBundle(null)
+    setViews({})
+    setLiveCalls([])
+    setFinal(null)
+    setDrawer(null)
+    setChartIdx(0)
+    const handle = (e: InvestigateEvent) => {
+      if (e.type === 'tool') setLiveCalls((c) => [...c, e.call])
+      else if (e.type === 'bundle') setBundle(e.bundle)
+      else if (e.type === 'view') setViews((v) => ({ ...v, [e.role]: e.view }))
+      else if (e.type === 'done') {
+        setFinal(e.response)
+        setBundle(e.response.bundle)
+        setViews(e.response.views)
+      } else throw new Error(e.error)
+    }
     try {
-      const res = await fetch('/api/investigate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text }) })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
-      setData(body as InvestigateResponse)
-      setChartIdx(0)
-      setDrawer(null)
+      // The selected role is written first, so the tab the user is looking at fills in first.
+      const res = await fetch(`/api/investigate/stream?first=${role}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text }) })
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${res.status}`)
+      }
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+      let buf = ''
+      let finished = false
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += value
+        let nl = buf.indexOf('\n')
+        while (nl >= 0) {
+          const line = buf.slice(0, nl)
+          buf = buf.slice(nl + 1)
+          if (line.trim()) {
+            const event = JSON.parse(line) as InvestigateEvent
+            if (event.type === 'done') finished = true
+            handle(event)
+          }
+          nl = buf.indexOf('\n')
+        }
+      }
+      if (!finished) throw new Error('the connection closed before the answer was complete')
     } catch (err) {
       setError(`The investigation failed: ${(err as Error).message}`)
     } finally {
@@ -257,7 +296,7 @@ export default function App() {
   }
 
   function openFact(id: string) {
-    const fact = data?.bundle.facts.find((f) => f.id === id)
+    const fact = bundle?.facts.find((f) => f.id === id)
     if (fact) setDrawer({ kind: 'fact', fact })
   }
 
@@ -268,7 +307,8 @@ export default function App() {
     tabRefs.current[next]?.focus()
   }
 
-  const b = data?.bundle
+  const b = bundle
+  const roleName = ROLES.find((r) => r.id === role)!.name
 
   return (
     <>
@@ -342,22 +382,34 @@ export default function App() {
                   onClick={() => setRole(r.id)} onKeyDown={(e) => onTabKey(e, i)}
                 >
                   {r.name} <span className="hint">{r.hint}</span>
+                  {loading && !views[r.id] && <><span className="spinner" aria-hidden="true" /><span className="visually-hidden">(being written)</span></>}
                 </button>
               ))}
             </div>
             <div id="role-panel" role="tabpanel" aria-labelledby={`tab-${role}`}>
-              {loading ? (
-                <div className="placeholder" aria-live="polite">
-                  <h2 style={{ display: 'flex', alignItems: 'center', gap: 12 }}><span className="spinner" aria-hidden="true" />Investigating, {secs(elapsed)}</h2>
-                  <p>New questions usually take 25 to 30 seconds. Example questions are cached.</p>
-                  <ol className="steps">
-                    {STEPS.map((st) => <li key={st} className="now"><span aria-hidden="true">·</span>{st}</li>)}
-                  </ol>
-                </div>
+              {views[role] ? (
+                <>
+                  {error && <div className="view" style={{ paddingBottom: 0 }}><div className="error-box" role="alert">{error}</div></div>}
+                  <RolePanel view={views[role]!} onFact={openFact} />
+                </>
               ) : error ? (
                 <div className="view"><div className="error-box" role="alert">{error}</div></div>
-              ) : data ? (
-                <RolePanel view={data.views[role]} onFact={openFact} />
+              ) : loading && !b ? (
+                <div className="placeholder" aria-live="polite">
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: 12 }}><span className="spinner" aria-hidden="true" />Collecting evidence, {secs(elapsed)}</h2>
+                  <p>The agent picks read-only queries; SereneDB runs them. New questions take about 30 seconds in total.</p>
+                  <ol className="steps">
+                    {liveCalls.length === 0 && <li className="now">{STEPS[0]}</li>}
+                    {liveCalls.map((t) => (
+                      <li key={t.id} className="done"><span aria-hidden="true">✓</span><span className="mono">{t.tool}</span> {fmt(t.rowCount)} rows in {t.ms} ms</li>
+                    ))}
+                  </ol>
+                </div>
+              ) : loading ? (
+                <div className="placeholder" aria-live="polite">
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: 12 }}><span className="spinner" aria-hidden="true" />Writing the {roleName} view, {secs(elapsed)}</h2>
+                  <p>The evidence is ready on the right. The three views are written one after another from that same evidence.</p>
+                </div>
               ) : (
                 <div className="placeholder">
                   <h2>Pick an example or ask your own question</h2>
@@ -380,7 +432,7 @@ export default function App() {
                       {b.charts.map((c, i) => <button type="button" key={c.id} aria-pressed={chartIdx === i} onClick={() => setChartIdx(i)}>Chart {i + 1}</button>)}
                     </div>
                   )}
-                  <Chart chart={b.charts[Math.min(chartIdx, b.charts.length - 1)]!} key={`${data?.bundle.queryId}-${chartIdx}`} />
+                  <Chart chart={b.charts[Math.min(chartIdx, b.charts.length - 1)]!} key={`${b.queryId}-${chartIdx}`} />
                 </div>
               )}
               {b ? (
@@ -402,23 +454,23 @@ export default function App() {
           </aside>
         </section>
 
-        {b && data && (
+        {(b || liveCalls.length > 0) && (
           <section className="trace container" id="trace" aria-labelledby="trace-title">
             <div className="trace-head">
               <h2 id="trace-title">How this answer was built</h2>
-              <p>{secs(data.timings.totalMs)} total · database {data.timings.dbMs} ms · language model {secs(data.timings.llmMs)}{data.cachedAt ? ` · cached answer from ${new Date(data.cachedAt).toLocaleString()}` : ''}</p>
+              <p>{final ? `${secs(final.timings.totalMs)} total · database ${final.timings.dbMs} ms · language model ${secs(final.timings.llmMs)}${final.cachedAt ? ` · cached answer from ${new Date(final.cachedAt).toLocaleString()}` : ''}` : `In progress, ${secs(elapsed)}`}</p>
             </div>
             <div className="pipeline">
               <div className="stage">
                 <span className="eyebrow">Question</span>
-                <p>{b.question}</p>
+                <p>{b?.question ?? question}</p>
               </div>
               <div className="arrow" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></div>
               <div className="stage">
                 <span className="eyebrow">Read-only queries on SereneDB, chosen by the agent</span>
                 <div className="calls">
-                  {b.toolCalls.map((t) => (
-                    <button type="button" className="call" key={t.id} onClick={() => setDrawer({ kind: 'call', call: t })}>
+                  {(b?.toolCalls ?? liveCalls).map((t) => (
+                    <button type="button" className="call" key={t.id} onClick={() => setDrawer({ kind: 'call', call: t })} disabled={!b}>
                       <span className="tid">{t.id}</span>
                       <span className="tool">{t.tool}</span>
                       <span className="args">{argsSummary(t.args)}</span>
@@ -430,16 +482,20 @@ export default function App() {
               <div className="arrow" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></div>
               <div className="stage">
                 <span className="eyebrow">Evidence bundle</span>
-                <span className="big">{b.facts.length}</span>
-                <p>facts with {b.logs.length} source log lines. The model cannot add facts.</p>
+                {b ? (
+                  <>
+                    <span className="big">{b.facts.length}</span>
+                    <p>facts with {b.logs.length} source log lines. The model cannot add facts.</p>
+                  </>
+                ) : <p>Collecting</p>}
               </div>
               <div className="arrow" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></div>
               <div className="stage">
                 <span className="eyebrow">Three views</span>
                 <ul className="role-list">
                   {ROLES.map((r) => {
-                    const v = data.views[r.id]
-                    return <li key={r.id}>{r.name}: {'error' in v ? 'unavailable' : `${v.findings.length} findings, ${v.findings.filter((f) => f.status === 'observed').length} observed`}</li>
+                    const v = views[r.id]
+                    return <li key={r.id}>{r.name}: {!v ? (loading ? 'being written' : 'not available') : 'error' in v ? 'unavailable' : `${v.findings.length} findings, ${v.findings.filter((f) => f.status === 'observed').length} observed`}</li>
                   })}
                 </ul>
               </div>
@@ -457,7 +513,7 @@ export default function App() {
         </div>
       </footer>
 
-      <Drawer content={drawer} data={data} onClose={() => setDrawer(null)} />
+      <Drawer content={drawer} bundle={bundle} onClose={() => setDrawer(null)} />
     </>
   )
 }

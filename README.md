@@ -58,7 +58,7 @@ cd ../frontend && npm install && npm run dev
 scripts/smoke.sh                       # end-to-end checks against the running backend
 ```
 
-API: `GET /api/health`, `GET /api/examples`, `POST /api/investigate {"question": "..."}` (`?fresh=1` skips the answer cache). The contract is in `shared/contract.ts`.
+API: `GET /api/health`, `GET /api/examples`, `POST /api/investigate {"question": "..."}` (`?fresh=1` skips the answer cache) and `POST /api/investigate/stream?first=<role>`, which streams newline-delimited JSON events: each finished query, the evidence bundle, then each role view (the selected role first). The contract is in `shared/contract.ts`.
 
 ## Data
 
@@ -78,7 +78,8 @@ AMD Ryzen 7 7745HX laptop, 16 threads, 32 GB RAM, SereneDB 26.10.1 in Docker, 20
 | `CREATE INDEX ... USING inverted` returned | 2.3 s |
 | Demo SQL queries (phrase search, BM25 top-k, time windows, GROUP BY over all alerts) | 1 to 12 ms each, two runs |
 | Database time per investigation | 45 to 136 ms |
-| LLM time per investigation | about 28 s (planner about 9 s, role writing about 20 s) |
+| LLM time per investigation | about 30 s: planner about 9 s, then three role views written one after another |
+| Streamed: evidence on screen / first role view / all views | 9.4 s / 16.8 s / 29.7 s (one browser run) |
 
 ## SereneDB notes from building this (26.10.1, reproduced on 2026-10-18)
 
