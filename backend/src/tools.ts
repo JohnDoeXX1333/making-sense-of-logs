@@ -79,6 +79,8 @@ function describeFilters(f: Record<string, unknown>): string {
   return parts.length ? ` (${parts.join(", ")})` : "";
 }
 
+// Grouped queries read the base table and use the index only to select line ids: on 26.10.1 a GROUP BY
+// directly over the inverted index overcounted one group by 2 rows in our tests.
 let bm25Broken = process.env.SEARCH_MODE === "match";
 
 export async function searchLogs(ev: Evidence, raw: unknown) {
@@ -104,10 +106,10 @@ export async function searchLogs(ev: Evidence, raw: unknown) {
   }
   if (bm25Broken) ev.searchMode = "match";
 
-  const breakdownSql = `SELECT label, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample FROM bgl_idx WHERE ${conds} GROUP BY label ORDER BY n DESC LIMIT 8`;
-  const breakdown = await query<{ label: string; n: number; nodes: number; first_id: number; last_id: number; first_t: string; last_t: string; sample: string }>(breakdownSql, params);
+  const breakdownSql = `SELECT label, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample, sum(count(*)) OVER ()::BIGINT AS total FROM bgl_logs WHERE line_id IN (SELECT line_id FROM bgl_idx WHERE ${conds}) GROUP BY label ORDER BY n DESC LIMIT 8`;
+  const breakdown = await query<{ label: string; n: number; nodes: number; first_id: number; last_id: number; first_t: string; last_t: string; sample: string; total: number }>(breakdownSql, params);
 
-  const total = breakdown.rows.reduce((s, r) => s + r.n, 0);
+  const total = breakdown.rows[0]?.total ?? 0;
   const call = ev.addToolCall({ tool: "searchLogs", args: a, sql: `${sql};\n${breakdownSql}`, rowCount: rows.length, ms: ms + breakdown.ms });
   const how = a.phrase ? `the phrase "${a.query}"` : `any of the words "${a.query}"`;
   const facts = [
@@ -205,23 +207,25 @@ export async function aggregate(ev: Evidence, raw: unknown) {
   const conds: string[] = [];
   if (a.query) {
     params.push(a.query);
-    conds.push("message @@ $1");
+    conds.push("line_id IN (SELECT line_id FROM bgl_idx WHERE message @@ $1)");
   }
   conds.push(...where(a, params));
   const isTime = ["hour", "day", "week"].includes(a.groupBy);
   const g = GROUP_SQL[a.groupBy];
   const limit = a.limit ?? (isTime ? 60 : 12);
-  const sql = `SELECT ${g} AS g, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, min(line_id) AS first_id, max(line_id) AS last_id FROM ${a.query ? "bgl_idx" : "bgl_logs"}${conds.length ? ` WHERE ${conds.join(" AND ")}` : ""} GROUP BY 1 ORDER BY ${isTime ? "1" : "n DESC"} LIMIT ${limit}`;
-  const { rows, ms } = await query<{ g: string | null; n: number; nodes: number; days: number; fatal: number; first_id: number; last_id: number }>(sql, params);
+  const sql = `SELECT ${g} AS g, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, min(line_id) AS first_id, max(line_id) AS last_id, sum(count(*)) OVER ()::BIGINT AS total, count(*) OVER ()::BIGINT AS groups FROM bgl_logs${conds.length ? ` WHERE ${conds.join(" AND ")}` : ""} GROUP BY 1 ORDER BY ${isTime ? "1" : "n DESC"} LIMIT ${limit}`;
+  const { rows, ms } = await query<{ g: string | null; n: number; nodes: number; days: number; fatal: number; first_id: number; last_id: number; total: number; groups: number }>(sql, params);
   const call = ev.addToolCall({ tool: "aggregate", args: a, sql, rowCount: rows.length, ms });
   const scope = `${a.query ? ` matching "${a.query}"` : ""}${describeFilters(a)}`;
-  const total = rows.reduce((s, r) => s + r.n, 0);
-  const facts = [ev.addFact(call.id, `Total log lines${scope} grouped by ${a.groupBy}${isTime && rows.length === limit ? ` (first ${limit} buckets)` : ""}`, total, [])];
+  const total = rows[0]?.total ?? 0;
+  const groups = rows[0]?.groups ?? 0;
+  const shown = groups > rows.length ? `; ${groups} ${a.groupBy} groups, ${isTime ? "first" : "top"} ${rows.length} shown` : `; ${groups} ${a.groupBy} groups`;
+  const facts = [ev.addFact(call.id, `Total log lines${scope}${shown}`, total, [])];
   const top = isTime ? [...rows].sort((x, y) => y.n - x.n).slice(0, 4) : rows.slice(0, 8);
   for (const r of top) {
     const key = isTime ? String(r.g).slice(0, a.groupBy === "hour" ? 13 : 10) : String(r.g ?? "unknown");
     facts.push(
-      ev.addFact(call.id, `${a.groupBy} ${key}${scope}: ${r.nodes} distinct nodes, ${r.days} active days, ${r.fatal} FATAL/FAILURE lines`, r.n, [r.first_id, r.last_id]),
+      ev.addFact(call.id, `${a.groupBy} ${key}${scope}: ${r.nodes} distinct named nodes, ${r.days} active days, ${r.fatal} FATAL/FAILURE lines`, r.n, [r.first_id, r.last_id]),
     );
   }
   if (rows.length > 1) {

@@ -6,6 +6,21 @@ Ask one question about 4.7 million Blue Gene/L supercomputer log lines. SereneDB
 
 ## How it works
 
+```mermaid
+flowchart LR
+  Q[Question] --> P[Planner LLM<br/>DeepSeek V4.1 Flash]
+  P -- typed tool calls --> T[searchLogs · getContext · aggregate<br/>zod-validated, read-only]
+  T -- parameterised SQL --> DB[(SereneDB 26.10.1<br/>4,747,963 BGL rows<br/>inverted index + BM25)]
+  DB --> E[EvidenceBundle<br/>facts F1..Fn + source rows + SQL]
+  DB --> PR[Priority score<br/>transparent formula]
+  E --> V1[Engineer view]
+  E --> V2[Team lead view]
+  E --> V3[Manager view]
+  PR --> V3
+  V1 & V2 & V3 --> C{Evidence check<br/>drop uncited findings,<br/>downgrade unsupported numbers}
+  C --> UI[React UI<br/>role tabs · evidence drawer · query trace]
+```
+
 ```
 question
   -> planner LLM picks 2 to 6 typed, read-only tool calls (searchLogs, getContext, aggregate)
@@ -64,6 +79,13 @@ AMD Ryzen 7 7745HX laptop, 16 threads, 32 GB RAM, SereneDB 26.10.1 in Docker, 20
 | Demo SQL queries (phrase search, BM25 top-k, time windows, GROUP BY over all alerts) | 1 to 12 ms each, two runs |
 | Database time per investigation | 45 to 136 ms |
 | LLM time per investigation | about 28 s (planner about 9 s, role writing about 20 s) |
+
+## SereneDB notes from building this (26.10.1, reproduced on 2026-10-18)
+
+- BM25 ranking worked on the full 4.7M-row corpus; we saw no Unicode error. The source file is valid UTF-8 throughout.
+- `SET statement_timeout` is accepted with the warning "not enforced by serened", so the 8 s query budget lives in the client (`query_timeout` in node-postgres).
+- `GROUP BY` directly over the inverted index overcounted one group in our tests:
+  `SELECT label, count(*) FROM bgl_idx WHERE message @@ 'panic' GROUP BY label` returns a `-` group with 2 rows, while `SELECT count(*) FROM bgl_idx WHERE message @@ 'panic' AND label = '-'` returns 0 and the plain `count(*)` (4,001) matches a regex scan of the base table and `grep` on the raw file. Our grouped queries therefore use the index only to select line ids (`WHERE line_id IN (SELECT line_id FROM bgl_idx WHERE ...)`) and group on the base table, which returns exact counts in 4 to 8 ms.
 
 ## What the logs cannot tell you
 
