@@ -17,6 +17,9 @@ const p2 = (n: number) => String(n).padStart(2, "0");
 
 function build(y: number, mo: number, d: number, h: number, mi: number, s: number, frac = ""): string | null {
   if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return null;
+  const leapYear = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const daysInMonth = mo === 2 ? (leapYear ? 29 : 28) : [4, 6, 9, 11].includes(mo) ? 30 : 31;
+  if (d > daysInMonth) return null;
   const f = frac ? `.${frac.slice(0, 6).padEnd(6, "0")}` : "";
   return `${String(y).padStart(4, "0")}-${p2(mo)}-${p2(d)} ${p2(h)}:${p2(mi)}:${p2(s)}${f}`;
 }
