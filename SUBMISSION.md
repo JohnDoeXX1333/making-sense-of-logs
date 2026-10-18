@@ -30,7 +30,10 @@ One Investigation, Three Perspectives
 https://github.com/JohnDoeXX1333/making-sense-of-logs (private). Give the jury access before submitting: add the jury's GitHub accounts as collaborators, or upload a zip of the submitted commit if the form allows it. Submitted commit: FILL IN (run `git rev-parse HEAD` after the final push).
 
 ## Demo video
-https://github.com/JohnDoeXX1333/making-sense-of-logs/releases/tag/demo-2026-10-18 (demo_elevenlabs.mp4, 2:46; the repo is private, so the jury needs access, or upload the same file to an unlisted YouTube or Drive link)
+https://github.com/JohnDoeXX1333/making-sense-of-logs/releases/download/demo-2026-10-18/demo.mp4 (2:46, voice-over and captions). Works for the jury only after the repo is public.
+
+## Slides (PDF)
+https://github.com/JohnDoeXX1333/making-sense-of-logs/blob/main/docs/slides/making-sense-of-logs.pdf (12 slides; source deck docs/slides/making-sense-of-logs.pptx). Works for the jury only after the repo is public.
 
 ## Declaration of pre-existing components, datasets, AI tools and licences
 

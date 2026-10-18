@@ -6,3 +6,4 @@ frontend/dist/
 *.log
 demo/out/
 __pycache__/
+docs/slides/img/_*
