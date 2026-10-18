@@ -404,7 +404,7 @@ export default function App() {
           </div>
         </section>
 
-        {dataset && <Overview dataset={dataset} key={dataset.id} />}
+        {dataset && <Overview dataset={dataset} key={dataset.id} onAsk={(q) => void run(q)} />}
 
         <section className="results container" id="results" aria-label="Results">
           <div className="panel" aria-busy={loading}>

@@ -176,6 +176,42 @@ export interface Overview {
   patterns: { label: string; events: number; nodes: number; first: string | null; last: string | null }[];
 }
 
+// GET /api/datasets/:id/insights?from=&to=  (no range = the whole dataset, without comparison)
+export interface LineFilter {
+  field: "all" | "time" | "label" | "node" | "level" | "component";
+  value: string;
+  unit?: "minute" | "hour" | "day";
+  alertsOnly?: boolean;
+  from?: string;
+  to?: string;
+}
+
+// One rule-based sentence; every number in it comes from SQL.
+export interface Takeaway {
+  kind: "share" | "peak" | "concentration" | "change";
+  text: string;
+  filter?: LineFilter;
+}
+
+export interface Mover {
+  key: string;
+  now: number;
+  before: number;
+  delta: number;
+  firstSeen: string | null; // labels only: first time this label appears anywhere in the dataset
+}
+
+export interface Insights {
+  datasetId: string;
+  period: { from: string; to: string };
+  previous: { from: string; to: string; length: string } | null; // null when the data does not fully cover an equal earlier period
+  kpis: { lines: number; alerts: number; share: number; prevLines: number | null; prevAlerts: number | null; prevShare: number | null };
+  takeaways: Takeaway[];
+  peak: { x: string; alerts: number } | null; // x matches the time chart's bucket label
+  spikes: string[]; // buckets far above their rolling baseline, over the whole dataset
+  movers: { labels: Mover[]; nodes: Mover[] } | null;
+}
+
 export interface LinesResponse {
   total: number;
   rows: LogRow[];

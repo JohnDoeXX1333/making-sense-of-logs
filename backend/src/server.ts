@@ -5,7 +5,8 @@ import type { Health, InvestigateEvent, InvestigateResponse, Role } from "../../
 import { investigate, type Emit } from "./agent.ts";
 import { BGL_EXAMPLES, type Dataset, getDataset, listDatasets, loadRegistry } from "./datasets.ts";
 import { query } from "./db.ts";
-import { lines, overview } from "./overview.ts";
+import { insights } from "./insights.ts";
+import { lines, overview, type Range } from "./overview.ts";
 import { detect, ingest, MAX_UPLOAD_BYTES } from "./upload.ts";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
@@ -71,19 +72,46 @@ app.post<{ Params: { id: string } }>("/api/datasets/:id/ingest", async (req, rep
   }
 });
 
-app.get<{ Params: { id: string } }>("/api/datasets/:id/overview", async (req, reply) => {
+// Optional ?from=&to= range ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM[:SS]"), to exclusive.
+function parseRange(q: { from?: string; to?: string }): Range | null | "invalid" {
+  if (!q.from && !q.to) return null;
+  const norm = (t: string | undefined) => {
+    const m = t?.match(/^(\d{4}-\d\d-\d\d)(?:[ T](\d\d):(\d\d)(?::(\d\d))?)?$/);
+    return m ? `${m[1]} ${m[2] ?? "00"}:${m[3] ?? "00"}:${m[4] ?? "00"}` : null;
+  };
+  const from = norm(q.from);
+  const to = norm(q.to);
+  return from && to && from < to ? { from, to } : "invalid";
+}
+
+type RangeQuery = { from?: string; to?: string };
+
+app.get<{ Params: { id: string }; Querystring: RangeQuery }>("/api/datasets/:id/overview", async (req, reply) => {
   const ds = dataset(req.params.id, reply);
-  return ds ? overview(ds) : { error: "unknown dataset" };
+  if (!ds) return { error: "unknown dataset" };
+  const range = parseRange(req.query);
+  if (range === "invalid") return reply.code(400).send({ error: "from and to must be dates, from before to" });
+  return overview(ds, range);
 });
 
-app.get<{ Params: { id: string }; Querystring: { field?: string; value?: string; unit?: string; alerts?: string } }>(
+app.get<{ Params: { id: string }; Querystring: RangeQuery }>("/api/datasets/:id/insights", async (req, reply) => {
+  const ds = dataset(req.params.id, reply);
+  if (!ds) return { error: "unknown dataset" };
+  const range = parseRange(req.query);
+  if (range === "invalid") return reply.code(400).send({ error: "from and to must be dates, from before to" });
+  return insights(ds, range);
+});
+
+app.get<{ Params: { id: string }; Querystring: RangeQuery & { field?: string; value?: string; unit?: string; alerts?: string } }>(
   "/api/datasets/:id/lines",
   async (req, reply) => {
     const ds = dataset(req.params.id, reply);
     if (!ds) return { error: "unknown dataset" };
     if (!req.query.field || req.query.value === undefined) return reply.code(400).send({ error: "field and value are required" });
     try {
-      return await lines(ds, req.query.field, req.query.value, req.query.unit, req.query.alerts === "1");
+      const range = parseRange(req.query);
+      if (range === "invalid") return reply.code(400).send({ error: "from and to must be dates, from before to" });
+      return await lines(ds, req.query.field, req.query.value, req.query.unit, req.query.alerts === "1", range);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }

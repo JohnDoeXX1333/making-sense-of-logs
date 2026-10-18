@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
-import type { DatasetInfo, LinesResponse, Overview as OverviewData, OverviewChart } from '../../shared/contract.ts'
+import type { DatasetInfo, Insights as InsightsData, LineFilter, LinesResponse, Overview as OverviewData, OverviewChart } from '../../shared/contract.ts'
 import { Chart } from './Chart.tsx'
+import { InsightsPanel } from './Insights.tsx'
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 
-type Selection = { field: OverviewChart['field']; value: string; unit?: string; title: string }
+type Selection = { filter: LineFilter; title: string }
+type Range = { from: string; to: string }
+const UNIT_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 }
+// Chart bucket labels are "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"; turn them into range bounds.
+const bucketStart = (x: string) => (x.length === 10 ? `${x} 00:00:00` : `${x}:00`)
+const bucketEnd = (x: string, unit: keyof typeof UNIT_MS) => new Date(Date.parse(`${bucketStart(x).replace(' ', 'T')}Z`) + UNIT_MS[unit]).toISOString().slice(0, 19).replace('T', ' ')
+// Range ends are exclusive; show the last day that is included.
+const lastIncluded = (to: string) => new Date(Date.parse(`${to.replace(' ', 'T')}Z`) - 1).toISOString().slice(0, 10)
+const rangeQuery = (r: Range | null) => (r ? `from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}` : '')
 
 function BarList({ chart, onSelect, selected }: { chart: OverviewChart; onSelect: (i: number) => void; selected: string | null }) {
   const other = chart.series[0]?.values ?? []
@@ -36,8 +45,13 @@ function BarList({ chart, onSelect, selected }: { chart: OverviewChart; onSelect
   )
 }
 
-export function Overview({ dataset }: { dataset: DatasetInfo }) {
+export function Overview({ dataset, onAsk }: { dataset: DatasetInfo; onAsk: (question: string) => void }) {
   const [data, setData] = useState<OverviewData | null>(null)
+  const [range, setRange] = useState<Range | null>(null)
+  const [insights, setInsights] = useState<InsightsData | null>(null)
+  const [fromInput, setFromInput] = useState('')
+  const [toInput, setToInput] = useState('')
+  const [rangeError, setRangeError] = useState('')
   const [error, setError] = useState('')
   const [sel, setSel] = useState<Selection | null>(null)
   const [lines, setLines] = useState<LinesResponse | null>(null)
@@ -45,21 +59,21 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
   const [showSql, setShowSql] = useState(false)
 
   useEffect(() => {
-    setData(null)
     setSel(null)
     setLines(null)
     setError('')
-    fetch(`/api/datasets/${dataset.id}/overview`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-  }, [dataset.id])
+    const q = rangeQuery(range)
+    const get = (path: string) => fetch(`/api/datasets/${dataset.id}/${path}${q ? `?${q}` : ''}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    get('overview').then(setData).catch((e: Error) => setError(e.message))
+    get('insights').then(setInsights).catch((e: Error) => setError(e.message))
+  }, [dataset.id, range])
 
   useEffect(() => {
     if (!sel) return
     setLines(null)
     setLinesError('')
-    const q = new URLSearchParams({ field: sel.field, value: sel.value, ...(sel.unit ? { unit: sel.unit } : {}) })
+    const f = sel.filter
+    const q = new URLSearchParams({ field: f.field, value: f.value, ...(f.unit ? { unit: f.unit } : {}), ...(f.alertsOnly ? { alerts: '1' } : {}), ...(f.from && f.to ? { from: f.from, to: f.to } : {}) })
     fetch(`/api/datasets/${dataset.id}/lines?${q}`)
       .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b.error ?? `HTTP ${r.status}`)))))
       .then(setLines)
@@ -71,7 +85,35 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
   const hasNodes = data?.patterns.some((p) => p.nodes > 0) ?? false
   const pick = (c: OverviewChart, i: number) => {
     const value = c.x[i]!
-    setSel({ field: c.field, value, unit: c.unit, title: c.field === 'time' ? `Lines in the ${c.unit} starting ${value}` : `Lines where ${c.field} = ${value}` })
+    const scope = c.field !== 'time' && range ? { from: range.from, to: range.to } : {}
+    setSel({ filter: { field: c.field, value, unit: c.unit, ...scope }, title: c.field === 'time' ? `Lines in the ${c.unit} starting ${value}` : `Lines where ${c.field} = ${value}${range ? ' in the selected period' : ''}` })
+  }
+  const unit = (time?.unit ?? 'day') as keyof typeof UNIT_MS
+  const brush = (i0: number, i1: number) => {
+    if (!time) return
+    setRange({ from: bucketStart(time.x[i0]!), to: bucketEnd(time.x[i1]!, unit) })
+  }
+  const brushed: [number, number] | null = range && time
+    ? (() => {
+        const i0 = time.x.findIndex((x) => bucketStart(x) >= range.from)
+        const i1 = time.x.findLastIndex((x) => bucketStart(x) < range.to)
+        return i0 >= 0 && i1 >= i0 ? [i0, i1] : null
+      })()
+    : null
+  const applyTyped = () => {
+    const norm = (v: string) => (v ? `${v.replace('T', ' ')}${v.length === 16 ? ':00' : ''}` : '')
+    const from = norm(fromInput)
+    const to = norm(toInput)
+    if (!from || !to || from >= to) {
+      setRangeError('Enter a start and an end, with the start first.')
+      return
+    }
+    setRangeError('')
+    setRange({ from, to })
+  }
+  const show = (filter: LineFilter, title: string) => {
+    setSel({ filter, title })
+    requestAnimationFrame(() => document.getElementById('drill')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
   }
 
   return (
@@ -85,8 +127,8 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
           <dl className="stats">
             <div><dt>Lines</dt><dd>{fmt(data.rows)}</dd></div>
             <div><dt>Alert lines</dt><dd>{fmt(data.alerts)}</dd></div>
-            <div><dt>From</dt><dd>{dataset.timeFrom?.slice(0, 10) ?? 'n/a'}</dd></div>
-            <div><dt>To</dt><dd>{dataset.timeTo?.slice(0, 10) ?? 'n/a'}</dd></div>
+            <div><dt>{range ? 'Selected from' : 'From'}</dt><dd>{(range?.from ?? dataset.timeFrom)?.slice(0, 10) ?? 'n/a'}</dd></div>
+            <div><dt>{range ? 'Selected to' : 'To'}</dt><dd>{range ? lastIncluded(range.to) : (dataset.timeTo ? lastIncluded(dataset.timeTo) : 'n/a')}</dd></div>
           </dl>
         )}
       </div>
@@ -100,13 +142,35 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
         <div className="overview-grid">
           {time && (
             <div className="panel panel-body overview-time">
-              <Chart chart={time} width={1200} onSelect={(i) => pick(time, i)} selected={sel?.field === 'time' ? time.x.indexOf(sel.value) : null} />
+              <Chart
+                chart={time} width={1200}
+                onSelect={(i) => pick(time, i)} onBrush={brush} brushed={brushed}
+                selected={sel?.filter.field === 'time' ? time.x.indexOf(sel.filter.value) : null}
+                peak={insights?.peak ? time.x.indexOf(insights.peak.x) : null}
+                spikes={(insights?.spikes ?? []).map((x) => time.x.indexOf(x)).filter((i) => i >= 0)}
+              />
+              <div className="range-form">
+                <span className="muted">Drag across the chart to select a period, or type one:</span>
+                <label htmlFor="range-from">From</label>
+                <input id="range-from" type="datetime-local" value={fromInput} onChange={(e) => setFromInput(e.target.value)} aria-describedby={rangeError ? 'range-error' : undefined} />
+                <label htmlFor="range-to">To</label>
+                <input id="range-to" type="datetime-local" value={toInput} onChange={(e) => setToInput(e.target.value)} aria-describedby={rangeError ? 'range-error' : undefined} />
+                <button type="button" className="btn-secondary" onClick={applyTyped}>Select period</button>
+                {rangeError && <span className="field-error" id="range-error">{rangeError}</span>}
+              </div>
             </div>
+          )}
+          {insights && (
+            <InsightsPanel
+              data={insights} dataset={dataset} onShow={show}
+              onClear={range ? () => setRange(null) : null}
+              onAsk={range ? onAsk : null}
+            />
           )}
           <div className="overview-lists">
             {lists.map((c) => (
               <div className="panel panel-body" key={c.id}>
-                <BarList chart={c} onSelect={(i) => pick(c, i)} selected={sel?.field === c.field ? sel.value : null} />
+                <BarList chart={c} onSelect={(i) => pick(c, i)} selected={sel?.filter.field === c.field ? sel.filter.value : null} />
               </div>
             ))}
           </div>
@@ -119,7 +183,7 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
                   <tbody>
                     {data.patterns.map((p) => (
                       <tr key={p.label}>
-                        <td><button type="button" className="link-button pattern-link" onClick={() => setSel({ field: 'label', value: p.label, title: `Lines with pattern ${p.label}` })}>{p.label}</button></td>
+                        <td><button type="button" className="link-button pattern-link" onClick={() => show({ field: 'label', value: p.label, ...(range ?? {}) }, `Lines with ${dataset.kind === 'builtin' ? 'category' : 'pattern'} ${p.label}${range ? ' in the selected period' : ''}`)}>{p.label}</button></td>
                         <td className="num">{fmt(p.events)}</td>
                         {hasNodes && <td className="num">{fmt(p.nodes)}</td>}
                         <td>{p.first?.slice(0, 19) ?? ''}</td>
@@ -134,7 +198,7 @@ export function Overview({ dataset }: { dataset: DatasetInfo }) {
         </div>
       )}
       {sel && (
-        <div className="panel drill" aria-live="polite">
+        <div className="panel drill" id="drill" aria-live="polite">
           <div className="panel-head">
             <h3>{sel.title}</h3>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

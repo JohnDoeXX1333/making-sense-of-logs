@@ -87,6 +87,20 @@ assert l["total"]==o["patterns"][0]["events"], (l["total"], o["patterns"][0])
 ' "$o" "$l" && pass "upload: dashboard of dataset $up, drill-down count equals top pattern count" || fail "upload overview"
 fi
 
+# Insights for a selected week: KPIs against the previous week, top mover, and the mover's drill-down count.
+ins=$(curl -sf "$API/api/datasets/bgl/insights?from=2005-11-15&to=2005-11-22")
+mv=$(curl -sf "$API/api/datasets/bgl/lines?field=label&value=APPSEV&alerts=1&from=2005-11-15&to=2005-11-22")
+python3 -I -c '
+import json,sys
+d=json.loads(sys.argv[1]); l=json.loads(sys.argv[2])
+assert d["kpis"]["alerts"]==12205 and d["kpis"]["prevAlerts"]==5149, d["kpis"]
+assert d["previous"]["length"]=="7 days", d["previous"]
+top=d["movers"]["labels"][0]
+assert (top["key"],top["before"],top["now"])==("APPSEV",0,2417), top
+assert l["total"]==2417, l["total"]
+assert "2005-11-21" in d["spikes"] and d["peak"]["x"]=="2005-11-21", (d["peak"], d["spikes"])
+' "$ins" "$mv" && pass "insights: week of 2005-11-15 has 12,205 alerts vs 5,149, APPSEV 0 to 2,417 matches its drill-down" || fail "insights"
+
 # Bad input is rejected.
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/investigate" -H 'Content-Type: application/json' -d '{"question": ""}')
 [ "$code" = "400" ] && pass "empty question rejected with 400" || fail "empty question returned $code"
