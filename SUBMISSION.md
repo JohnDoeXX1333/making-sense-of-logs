@@ -30,7 +30,7 @@ One Investigation, Three Perspectives
 https://github.com/JohnDoeXX1333/making-sense-of-logs (private). Give the jury access before submitting: add the jury's GitHub accounts as collaborators, or upload a zip of the submitted commit if the form allows it. Submitted commit: FILL IN (run `git rev-parse HEAD` after the final push).
 
 ## Demo video
-FILL IN (link to the video of at most 3 minutes; see DEMO_SCRIPT.md)
+https://github.com/JohnDoeXX1333/making-sense-of-logs/releases/tag/demo-2026-10-18 (demo_elevenlabs.mp4, 2:46; the repo is private, so the jury needs access, or upload the same file to an unlisted YouTube or Drive link)
 
 ## Declaration of pre-existing components, datasets, AI tools and licences
 
@@ -39,4 +39,5 @@ FILL IN (link to the video of at most 3 minutes; see DEMO_SCRIPT.md)
 - Libraries: Fastify, node-postgres (pg), zod, TypeScript (backend); React, Vite (frontend); pyarrow (ingest). Each is used under its own open-source licence.
 - AI at runtime: DeepSeek V4.1 Flash through the Synthetic API (OpenAI-compatible). It receives only the user's question, BGL-derived facts and sample BGL log lines, which are public data. No partner data is sent.
 - AI assistants during development: Claude (Anthropic) wrote and tested most of the code with us; ChatGPT was used for the initial research report and for checking documentation.
+- Demo video: recorded from the running app with Playwright; voice-over generated with ElevenLabs text to speech (voice Eric, model eleven_v4).
 - All project code was written during the event, on 2026-10-18.
