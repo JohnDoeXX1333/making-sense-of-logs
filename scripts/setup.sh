@@ -15,6 +15,12 @@ if [ ! -f data/raw/BGL.log ]; then
 fi
 [ -f data/parquet/bgl.parquet ] || python3 -I ingest/parse_bgl.py data/raw/BGL.log data/parquet/bgl.parquet
 
+# Small public Loghub samples in other formats, for trying the upload feature.
+mkdir -p data/samples data/parquet/uploads
+for n in HDFS Linux Apache OpenSSH Zookeeper Spark; do
+  [ -f "data/samples/${n}_2k.log" ] || curl -sfL -o "data/samples/${n}_2k.log" "https://raw.githubusercontent.com/logpai/loghub/master/$n/${n}_2k.log"
+done
+
 docker compose up -d serenedb
 for _ in $(seq 1 30); do scripts/sql.sh -qAt -c "SELECT 1" >/dev/null 2>&1 && break; sleep 1; done
 scripts/sql.sh -qAt -c "SELECT version()"

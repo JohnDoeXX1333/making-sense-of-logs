@@ -64,6 +64,29 @@ ref=[(f["statement"],f.get("value")) for f in json.loads(sys.argv[2])["bundle"][
 assert facts==ref
 ' "$s" "$r2" && pass "stream: tool events, bundle, manager view first, done with identical facts" || fail "stream"
 
+# Upload: format detection on a Loghub sample (needs data/samples, see README) and the dashboard of an uploaded dataset.
+if [ -f data/samples/Spark_2k.log ]; then
+  d=$(curl -sf -X POST "$API/api/datasets/detect?name=Spark_2k.log" -H 'Content-Type: text/plain' --data-binary @data/samples/Spark_2k.log)
+  python3 -I -c '
+import json,sys
+d=json.loads(sys.argv[1])
+assert d["lines"]==2000, d["lines"]
+assert d["matchRate"]>=0.98 and d["timeRate"]>=0.98, (d["matchRate"], d["timeRate"], d["spec"])
+assert d["preview"][0]["time"]=="2017-06-09 20:10:40", d["preview"][0]
+' "$d" && pass "upload: Spark format detected, >=98% lines and times parsed, first time 2017-06-09 20:10:40" || fail "upload detect"
+fi
+up=$(curl -sf "$API/api/datasets" | python3 -I -c 'import json,sys; print(next((d["id"] for d in json.load(sys.stdin) if d["kind"]=="upload"), ""))')
+if [ -n "$up" ]; then
+  o=$(curl -sf "$API/api/datasets/$up/overview")
+  l=$(curl -sf "$API/api/datasets/$up/lines?field=label&value=$(python3 -I -c 'import json,sys,urllib.parse; print(urllib.parse.quote(json.loads(sys.argv[1])["patterns"][0]["label"]))' "$o")")
+  python3 -I -c '
+import json,sys
+o=json.loads(sys.argv[1]); l=json.loads(sys.argv[2])
+assert o["rows"]>0 and o["charts"], o
+assert l["total"]==o["patterns"][0]["events"], (l["total"], o["patterns"][0])
+' "$o" "$l" && pass "upload: dashboard of dataset $up, drill-down count equals top pattern count" || fail "upload overview"
+fi
+
 # Bad input is rejected.
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/investigate" -H 'Content-Type: application/json' -d '{"question": ""}')
 [ "$code" = "400" ] && pass "empty question rejected with 400" || fail "empty question returned $code"

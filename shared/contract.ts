@@ -8,6 +8,7 @@ export type Role = "engineer" | "team_lead" | "manager";
 
 export interface InvestigateRequest {
   question: string;
+  dataset?: string; // DatasetInfo.id, default "bgl"
 }
 
 // One raw log record from SereneDB. lineId is the line number in BGL.log.
@@ -110,6 +111,76 @@ export type InvestigateEvent =
   | { type: "view"; role: Role; view: RoleView | { role: Role; error: string } }
   | { type: "done"; response: InvestigateResponse }
   | { type: "error"; error: string };
+
+// ---- Datasets: the built-in BGL log plus logs uploaded by the user ----
+// GET  /api/datasets                       -> DatasetInfo[]
+// POST /api/datasets/detect  body: text/plain log file, ?name=  -> DetectResponse (stores the file, proposes a format)
+// POST /api/datasets/:uploadId/ingest  body: { spec, name }  -> DatasetInfo
+// GET  /api/datasets/:id/overview          -> Overview
+// GET  /api/datasets/:id/lines?field=&value=&from=&to=  -> LinesResponse
+// Investigate endpoints accept { question, dataset } (dataset defaults to "bgl").
+
+export interface DatasetInfo {
+  id: string;
+  name: string;
+  kind: "builtin" | "upload";
+  rows: number;
+  timeFrom: string | null;
+  timeTo: string | null;
+  notes: string[]; // how derived fields were computed, shown in the UI
+  examples: ExampleQuestion[];
+  createdAt: string;
+}
+
+export interface FormatSpecDto {
+  pattern: string;
+  timeFormat: "iso" | "yymmdd_hhmmss" | "yy_slash" | "syslog" | "apache" | "clf" | "epoch" | "none";
+  year?: number;
+}
+
+export interface PreviewLine {
+  line: number;
+  time: string | null;
+  level: string | null;
+  component: string | null;
+  host: string | null;
+  message: string;
+  matched: boolean;
+}
+
+export interface DetectResponse {
+  uploadId: string;
+  name: string;
+  lines: number;
+  bytes: number;
+  spec: FormatSpecDto;
+  description: string; // the model's description of the format
+  matchRate: number; // 0..1 on the checked sample
+  timeRate: number; // 0..1
+  preview: PreviewLine[];
+  unmatchedExamples: string[];
+  attempts: number;
+  fallback: boolean; // true when no pattern was good enough and the whole line is used as the message
+}
+
+export interface OverviewChart extends Chart {
+  field: "time" | "level" | "component" | "node" | "label";
+  unit?: "minute" | "hour" | "day";
+}
+
+export interface Overview {
+  datasetId: string;
+  rows: number;
+  alerts: number;
+  charts: OverviewChart[];
+  patterns: { label: string; events: number; nodes: number; first: string | null; last: string | null }[];
+}
+
+export interface LinesResponse {
+  total: number;
+  rows: LogRow[];
+  sql: string;
+}
 
 export interface Health {
   ok: boolean;

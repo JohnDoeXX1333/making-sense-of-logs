@@ -2,9 +2,6 @@ import { z } from "zod";
 import { query, LOG_COLUMNS, type DbLogRow } from "./db.ts";
 import type { Evidence } from "./evidence.ts";
 
-export const DATA_START = "2005-06-03 00:00:00";
-export const DATA_END = "2006-01-05 00:00:00";
-
 // Accepts "2005-07-11", "2005-07-11 14:03", "2005-07-11T14:03:00Z" and returns "YYYY-MM-DD HH:MM:SS".
 // Times are log-local wall time; a trailing Z or offset from the model is ignored on purpose.
 const Time = z.string().transform((s, ctx) => {
@@ -21,11 +18,11 @@ const LEVELS = ["INFO", "WARNING", "ERROR", "SEVERE", "FATAL", "FAILURE"] as con
 const Filters = {
   from: Time.optional().describe("Start, log-local time, e.g. 2005-07-11 14:00:00"),
   to: Time.optional().describe("End, log-local time"),
-  label: z.string().regex(/^[A-Z]{3,12}$/).optional().describe("Alert category, e.g. KERNRTSP"),
-  level: z.enum(LEVELS).optional(),
-  component: z.string().regex(/^[A-Z]{2,12}$/).optional().describe("e.g. KERNEL, APP, MMCS"),
+  label: z.string().min(1).max(130).optional().describe("Alert label exactly as listed in the dataset description"),
+  level: z.string().regex(/^[A-Z]{1,12}$/).optional().describe("Upper-case level, e.g. " + LEVELS.join(", ")),
+  component: z.string().min(1).max(120).optional().describe("Component exactly as listed in the dataset description"),
   midplane: z.string().regex(/^R\d\d-M\d$/).optional().describe("e.g. R05-M0"),
-  node: z.string().regex(/^[A-Za-z0-9:_-]{1,40}$/).optional(),
+  node: z.string().min(1).max(120).optional(),
   alertsOnly: z.boolean().optional().describe("Only lines with an alert label"),
 };
 
@@ -37,7 +34,7 @@ export const SearchArgs = z.object({
 });
 
 export const ContextArgs = z.object({
-  lineId: z.number().int().min(1).max(4747963).describe("Seed log line id from a previous result"),
+  lineId: z.number().int().min(1).describe("Seed log line id from a previous result"),
   beforeSeconds: z.number().int().min(0).max(3600).optional(),
   afterSeconds: z.number().int().min(0).max(3600).optional(),
   sameNode: z.boolean().optional(),
@@ -90,8 +87,8 @@ export async function searchLogs(ev: Evidence, raw: unknown) {
   const conds = [text, ...where(a, params)].join(" AND ");
   const limit = a.limit ?? 20;
 
-  const ranked = `SELECT ${LOG_COLUMNS}, BM25(bgl_idx.tableoid) AS score FROM bgl_idx WHERE ${conds} ORDER BY score DESC, event_time, line_id LIMIT ${limit}`;
-  const plain = `SELECT ${LOG_COLUMNS} FROM bgl_idx WHERE ${conds} ORDER BY event_time, line_id LIMIT ${limit}`;
+  const ranked = `SELECT ${LOG_COLUMNS}, BM25(${ev.ds.index}.tableoid) AS score FROM ${ev.ds.index} WHERE ${conds} ORDER BY score DESC, event_time, line_id LIMIT ${limit}`;
+  const plain = `SELECT ${LOG_COLUMNS} FROM ${ev.ds.index} WHERE ${conds} ORDER BY event_time, line_id LIMIT ${limit}`;
   let sql = bm25Broken ? plain : ranked;
   let rows: DbLogRow[];
   let ms: number;
@@ -106,7 +103,7 @@ export async function searchLogs(ev: Evidence, raw: unknown) {
   }
   if (bm25Broken) ev.searchMode = "match";
 
-  const breakdownSql = `SELECT label, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample, sum(count(*)) OVER ()::BIGINT AS total FROM bgl_logs WHERE line_id IN (SELECT line_id FROM bgl_idx WHERE ${conds}) GROUP BY label ORDER BY n DESC LIMIT 8`;
+  const breakdownSql = `SELECT label, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample, sum(count(*)) OVER ()::BIGINT AS total FROM ${ev.ds.table} WHERE line_id IN (SELECT line_id FROM ${ev.ds.index} WHERE ${conds}) GROUP BY label ORDER BY n DESC LIMIT 8`;
   const breakdown = await query<{ label: string; n: number; nodes: number; first_id: number; last_id: number; first_t: string; last_t: string; sample: string; total: number }>(breakdownSql, params);
 
   const total = breakdown.rows[0]?.total ?? 0;
@@ -132,7 +129,7 @@ function addSeconds(t: string, seconds: number): string {
 
 export async function getContext(ev: Evidence, raw: unknown) {
   const a = ContextArgs.parse(raw);
-  const seed = await query<DbLogRow>(`SELECT ${LOG_COLUMNS} FROM bgl_logs WHERE line_id = $1`, [a.lineId]);
+  const seed = await query<DbLogRow>(`SELECT ${LOG_COLUMNS} FROM ${ev.ds.table} WHERE line_id = $1`, [a.lineId]);
   const s = seed.rows[0];
   if (!s) throw new Error(`line ${a.lineId} not found`);
   const before = a.beforeSeconds ?? 60;
@@ -151,10 +148,10 @@ export async function getContext(ev: Evidence, raw: unknown) {
     conds.push(`midplane = $${params.length}`);
   }
   const w = conds.join(" AND ");
-  const groupSql = `SELECT label, level, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT midplane) AS midplanes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample FROM bgl_logs WHERE ${w} GROUP BY label, level ORDER BY first_t LIMIT 12`;
-  const rowsSql = `SELECT ${LOG_COLUMNS} FROM bgl_logs WHERE ${w} ORDER BY event_time, line_id LIMIT 40`;
+  const groupSql = `SELECT label, level, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT midplane) AS midplanes, min(line_id) AS first_id, max(line_id) AS last_id, min(event_time) AS first_t, max(event_time) AS last_t, min(message) AS sample FROM ${ev.ds.table} WHERE ${w} GROUP BY label, level ORDER BY first_t LIMIT 12`;
+  const rowsSql = `SELECT ${LOG_COLUMNS} FROM ${ev.ds.table} WHERE ${w} ORDER BY event_time, line_id LIMIT 40`;
   const bucket = before + after <= 300 ? "second" : "minute";
-  const chartSql = `SELECT date_trunc('${bucket}', event_time) AS b, label, count(*) AS n FROM bgl_logs WHERE ${w} GROUP BY 1, 2 ORDER BY 1 LIMIT 400`;
+  const chartSql = `SELECT date_trunc('${bucket}', event_time) AS b, label, count(*) AS n FROM ${ev.ds.table} WHERE ${w} GROUP BY 1, 2 ORDER BY 1 LIMIT 400`;
   const [groups, rows, chart] = await Promise.all([
     query<{ label: string; level: string; n: number; nodes: number; midplanes: number; first_id: number; last_id: number; first_t: string; last_t: string; sample: string }>(groupSql, params),
     query<DbLogRow>(rowsSql, params),
@@ -207,13 +204,13 @@ export async function aggregate(ev: Evidence, raw: unknown) {
   const conds: string[] = [];
   if (a.query) {
     params.push(a.query);
-    conds.push("line_id IN (SELECT line_id FROM bgl_idx WHERE message @@ $1)");
+    conds.push(`line_id IN (SELECT line_id FROM ${ev.ds.index} WHERE message @@ $1)`);
   }
   conds.push(...where(a, params));
   const isTime = ["hour", "day", "week"].includes(a.groupBy);
   const g = GROUP_SQL[a.groupBy];
   const limit = a.limit ?? (isTime ? 60 : 12);
-  const sql = `SELECT ${g} AS g, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, min(line_id) AS first_id, max(line_id) AS last_id, sum(count(*)) OVER ()::BIGINT AS total, count(*) OVER ()::BIGINT AS groups FROM bgl_logs${conds.length ? ` WHERE ${conds.join(" AND ")}` : ""} GROUP BY 1 ORDER BY ${isTime ? "1" : "n DESC"} LIMIT ${limit}`;
+  const sql = `SELECT ${g} AS g, count(*) AS n, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, min(line_id) AS first_id, max(line_id) AS last_id, sum(count(*)) OVER ()::BIGINT AS total, count(*) OVER ()::BIGINT AS groups FROM ${ev.ds.table}${conds.length ? ` WHERE ${conds.join(" AND ")}` : ""} GROUP BY 1 ORDER BY ${isTime ? "1" : "n DESC"} LIMIT ${limit}`;
   const { rows, ms } = await query<{ g: string | null; n: number; nodes: number; days: number; fatal: number; first_id: number; last_id: number; total: number; groups: number }>(sql, params);
   const call = ev.addToolCall({ tool: "aggregate", args: a, sql, rowCount: rows.length, ms });
   const scope = `${a.query ? ` matching "${a.query}"` : ""}${describeFilters(a)}`;

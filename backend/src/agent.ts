@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { EvidenceBundle, Finding, InvestigateEvent, InvestigateResponse, LogRow, Role, RoleView } from "../../shared/contract.ts";
-import { fetchRows, query } from "./db.ts";
+import { fetchRows } from "./db.ts";
+import type { Dataset } from "./datasets.ts";
 import { Evidence } from "./evidence.ts";
 import { chat, chatJson, type Message } from "./llm.ts";
 import { PRIORITY_FORMULA, priorities } from "./priority.ts";
@@ -11,23 +12,10 @@ const MAX_ROUNDS = 3;
 const MAX_TOOL_CALLS = 6;
 const ROLES: Role[] = ["engineer", "team_lead", "manager"];
 
-const STANDARD_UNKNOWNS = [
-  "BGL logs contain no ownership, customer, cost, downtime or SLA data, so those cannot be stated.",
-];
-
-let datasetSummary = "";
-
-// Built once at startup from the database so the planner knows the real label names and time range.
-export async function loadDatasetSummary() {
-  const { rows } = await query<{ label: string; n: number }>(
-    "SELECT label, count(*) AS n FROM bgl_logs WHERE is_alert = true GROUP BY label ORDER BY n DESC LIMIT 25",
-  );
-  const range = await query<{ first_t: string; last_t: string; n: number }>(
-    "SELECT min(event_time) AS first_t, max(event_time) AS last_t, count(*) AS n FROM bgl_logs",
-  );
-  const r = range.rows[0]!;
-  datasetSummary = `Dataset: Blue Gene/L supercomputer RAS log (Loghub BGL), ${r.n} lines from ${r.first_t.slice(0, 19)} to ${r.last_t.slice(0, 19)} log-local time (US Pacific). Each line has a time, node (e.g. R05-M1-N6-C:J05-U01; midplane = first two parts, e.g. R05-M1), component (KERNEL, APP, MMCS, DISCOVERY, HARDWARE, MONITOR, LINKCARD, CMCS, BGLMASTER), level (INFO, WARNING, ERROR, SEVERE, FATAL, FAILURE), an alert label ("-" means not an alert) and a free-text message. Alert labels with line counts: ${rows.map((x) => `${x.label} ${x.n}`).join(", ")}.`;
-  return datasetSummary;
+function standardUnknowns(ds: Dataset) {
+  return ds.kind === "builtin"
+    ? ["BGL logs contain no ownership, customer, cost, downtime or SLA data, so those cannot be stated."]
+    : ["Ownership, customer impact, cost and downtime are not recorded in these log lines unless a message states them."];
 }
 
 const toolSpecs = (Object.keys(TOOLS) as (keyof typeof TOOLS)[]).map((name) => {
@@ -35,16 +23,16 @@ const toolSpecs = (Object.keys(TOOLS) as (keyof typeof TOOLS)[]).map((name) => {
   return { type: "function", function: { name, description: TOOL_DESCRIPTIONS[name], parameters } };
 });
 
-function plannerPrompt() {
-  return `You are the evidence-gathering step of a log investigation agent. ${datasetSummary}
+function plannerPrompt(ds: Dataset) {
+  return `You are the evidence-gathering step of a log investigation agent. ${ds.summary}
 
 Call the tools to collect the evidence needed to answer the question for an engineer, a team lead and a manager. Rules:
 - Use 2 to ${MAX_TOOL_CALLS} tool calls in total. Run independent calls in the same turn.
 - Times are log-local; write them as "YYYY-MM-DD HH:MM:SS" with no timezone.
-- For "what happened around X": searchLogs to find the event, then getContext on a returned lineId, then aggregate by midplane or node for spread.
+- For "what happened around X": searchLogs to find the event, then getContext on a returned lineId, then aggregate by midplane (when available) or node for spread.
 - For recurring problems or trends: aggregate by label, then by week or midplane for the top labels.
 - For priorities: aggregate by label (alertsOnly) and by week.
-- Prefer exact label filters when the question names a category.
+- Prefer exact label filters when the question names a category; copy label values exactly from the dataset description.
 - When you have enough evidence, reply with the single word DONE and no tool calls. Do not write the answer yourself.`;
 }
 
@@ -78,7 +66,7 @@ async function runTool(ev: Evidence, name: string, argsText: string): Promise<st
 
 async function gatherEvidence(ev: Evidence, question: string): Promise<number> {
   const messages: Message[] = [
-    { role: "system", content: plannerPrompt() },
+    { role: "system", content: plannerPrompt(ev.ds) },
     { role: "user", content: question },
   ];
   let llmMs = 0;
@@ -101,7 +89,7 @@ const ROLE_GUIDE: Record<Role, string> = {
   engineer:
     "Audience: the on-call engineer investigating the error. Give the concrete sequence of events with times, nodes, midplanes, components and labels, what came first, and the next checks to run. Separate what the logs show from hypotheses.",
   team_lead:
-    "Audience: a team lead who needs to understand recurring problems. Focus on what keeps coming back, how often, where it is concentrated (midplanes, nodes, components), whether it is rising or falling, and which follow-up work to assign. Ownership is not in the logs.",
+    "Audience: a team lead who needs to understand recurring problems. Focus on what keeps coming back, how often, where it is concentrated (midplanes when available, nodes or hosts, components), whether it is rising or falling, and which follow-up work to assign. Ownership is not in the logs.",
   manager:
     "Audience: a manager deciding what to prioritise. Use plain language without log jargon. Use the priority table: what ranks highest and why, using its inputs. State what the logs prove and what they cannot (impact on users, cost, downtime). Give at most 3 decisions.",
 };
@@ -170,7 +158,7 @@ Write the answer as JSON. Rules:
 - headline at most 10 words; summary at most 50 words; 3 or 4 findings, each claim at most 25 words; 1 to 3 recommendedActions of at most 20 words; at most 3 unknowns; plain English.`;
   const { value, ms } = await chatJson<DraftView>({
     messages: [
-      { role: "system", content: `You explain log evidence for one audience. ${datasetSummary}` },
+      { role: "system", content: `You explain log evidence for one audience. ${ev.ds.summary}` },
       { role: "user", content: prompt },
     ],
     jsonSchema: { name: "RoleView", schema: VIEW_SCHEMA },
@@ -187,10 +175,10 @@ export type Emit = (event: InvestigateEvent) => void;
 
 // Runs one investigation. Events are emitted as they happen: each finished query, the evidence bundle,
 // then each role view. The selected role is requested first because the provider handles one request at a time.
-export async function investigate(question: string, emit: Emit = () => {}, firstRole: Role = "engineer"): Promise<InvestigateResponse> {
+export async function investigate(ds: Dataset, question: string, emit: Emit = () => {}, firstRole: Role = "engineer"): Promise<InvestigateResponse> {
   const started = performance.now();
-  const ev = new Evidence((call) => emit({ type: "tool", call }));
-  ev.unknowns.push(...STANDARD_UNKNOWNS);
+  const ev = new Evidence(ds, (call) => emit({ type: "tool", call }));
+  ev.unknowns.push(...standardUnknowns(ds));
   let plannerMs = 0;
   try {
     plannerMs = await gatherEvidence(ev, question);
@@ -202,7 +190,7 @@ export async function investigate(question: string, emit: Emit = () => {}, first
   }
   const touched = [...new Set(ev.toolCalls.map((t) => (t.args as { label?: string }).label).filter((l): l is string => !!l))];
   const prio = await priorities(ev, touched);
-  const logs = await fetchRows(ev.lineIds());
+  const logs = await fetchRows(ds.table, ev.lineIds());
   const bundle: EvidenceBundle = {
     queryId: randomUUID(),
     question,

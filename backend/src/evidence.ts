@@ -1,4 +1,5 @@
 import type { Chart, Fact, ToolCall } from "../../shared/contract.ts";
+import type { Dataset } from "./datasets.ts";
 
 // Collects everything the database returned for one investigation. Only the server adds facts.
 export class Evidence {
@@ -8,9 +9,11 @@ export class Evidence {
   unknowns: string[] = [];
   searchMode: "bm25" | "match" = "bm25";
 
+  readonly ds: Dataset;
   private onToolCall?: (call: ToolCall) => void;
 
-  constructor(onToolCall?: (call: ToolCall) => void) {
+  constructor(ds: Dataset, onToolCall?: (call: ToolCall) => void) {
+    this.ds = ds;
     this.onToolCall = onToolCall;
   }
 

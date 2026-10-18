@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { Chart as ChartData } from '../../shared/contract.ts'
 
 const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)']
-const W = 600
 const H = 220
 const PAD = { top: 12, right: 8, bottom: 28, left: 44 }
 const fmt = (n: number) => n.toLocaleString('en-US')
@@ -13,7 +12,9 @@ function niceMax(v: number) {
   return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v) ?? v
 }
 
-export function Chart({ chart }: { chart: ChartData }) {
+// onSelect makes bars clickable (drill-down); the table view offers the same action as buttons for keyboard users.
+export function Chart({ chart, onSelect, selected, width = 600 }: { chart: ChartData; onSelect?: (index: number) => void; selected?: number | null; width?: number }) {
+  const W = width
   const [hover, setHover] = useState<number | null>(null)
   const [asTable, setAsTable] = useState(false)
   const n = chart.x.length
@@ -28,11 +29,12 @@ export function Chart({ chart }: { chart: ChartData }) {
   const barW = Math.max(2, Math.min(40, step - 2))
   const cx = (i: number) => PAD.left + step * i + step / 2
   const ticks = [0, max / 2, max]
-  const labelEvery = Math.max(1, Math.ceil(n / 8))
+  const labelChars = Math.max(...chart.x.map((x) => x.length))
+  const labelEvery = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(iw / (labelChars * 6.5 + 16)))))
 
   const tooltip = hover === null ? null : (
     <div className="tooltip" style={{ left: `${(cx(hover) / W) * 100}%`, top: `${(y(isLine ? Math.max(...series.map((s) => s.values[hover] ?? 0)) : totals[hover]!) / H) * 100}%` }}>
-      <div style={{ marginBottom: 4 }}>{chart.x[hover]}</div>
+      <div style={{ marginBottom: 4 }}>{chart.x[hover]}{onSelect ? ' · click for lines' : ''}</div>
       {series.map((s) => (
         <div className="row" key={s.name}>
           <span>{s.name}</span>
@@ -57,7 +59,7 @@ export function Chart({ chart }: { chart: ChartData }) {
             <tbody>
               {chart.x.map((x, i) => (
                 <tr key={x}>
-                  <td>{x}</td>
+                  <td>{onSelect ? <button type="button" className="link-button" onClick={() => onSelect(i)}>{x}</button> : x}</td>
                   {series.map((s) => <td className="num" key={s.name}>{fmt(s.values[i] ?? 0)}</td>)}
                 </tr>
               ))}
@@ -96,7 +98,7 @@ export function Chart({ chart }: { chart: ChartData }) {
             {hover !== null && isLine && series.map((s, si) => <circle key={s.name} cx={cx(hover)} cy={y(s.values[hover] ?? 0)} r={4} fill={SERIES[si]} stroke="var(--surface)" strokeWidth={2} />)}
             <line className="baseline" x1={PAD.left} x2={W - PAD.right} y1={PAD.top + ih} y2={PAD.top + ih} />
             {chart.x.map((x, i) => (
-              <rect key={x} x={PAD.left + step * i} y={PAD.top} width={step} height={ih} fill="transparent" onMouseEnter={() => setHover(i)} />
+              <rect key={x} x={PAD.left + step * i} y={PAD.top} width={step} height={ih} fill={selected === i ? 'rgba(255,255,255,0.06)' : 'transparent'} onMouseEnter={() => setHover(i)} onClick={onSelect ? () => onSelect(i) : undefined} style={onSelect ? { cursor: 'pointer' } : undefined} />
             ))}
           </svg>
           {tooltip}

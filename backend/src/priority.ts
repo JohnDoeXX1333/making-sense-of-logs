@@ -1,7 +1,6 @@
 import type { PriorityItem } from "../../shared/contract.ts";
 import { query } from "./db.ts";
 import type { Evidence } from "./evidence.ts";
-import { DATA_END, DATA_START } from "./tools.ts";
 
 // Transparent manager priority. Every input is a database count; the weights are fixed and shown in the UI.
 export const PRIORITY_FORMULA =
@@ -12,11 +11,14 @@ function shift(t: string, ms: number) {
 }
 
 // Returns the top categories plus any category the investigation itself touched, so the manager sees where it ranks.
-export async function priorities(ev: Evidence, extraLabels: string[] = [], from = DATA_START, to = DATA_END, top = 5): Promise<PriorityItem[]> {
+export async function priorities(ev: Evidence, extraLabels: string[] = [], top = 5): Promise<PriorityItem[]> {
+  const from = ev.ds.timeFrom;
+  const to = ev.ds.timeTo;
+  if (!from || !to) return [];
   const span = new Date(`${to.replace(" ", "T")}Z`).getTime() - new Date(`${from.replace(" ", "T")}Z`).getTime();
   const recentStart = shift(to, -span / 4);
   const previousStart = shift(to, -span / 2);
-  const sql = `SELECT label, count(*) AS events, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, sum(CASE WHEN event_time >= $3::TIMESTAMP THEN 1 ELSE 0 END)::BIGINT AS recent, sum(CASE WHEN event_time >= $4::TIMESTAMP AND event_time < $3::TIMESTAMP THEN 1 ELSE 0 END)::BIGINT AS previous, min(line_id) AS first_id, max(line_id) AS last_id FROM bgl_logs WHERE is_alert = true AND event_time >= $1::TIMESTAMP AND event_time < $2::TIMESTAMP GROUP BY label`;
+  const sql = `SELECT label, count(*) AS events, count(DISTINCT CASE WHEN node NOT IN ('NULL', '-') THEN node END) AS nodes, count(DISTINCT date_trunc('day', event_time)) AS days, sum(CASE WHEN level IN ('FATAL', 'FAILURE') THEN 1 ELSE 0 END)::BIGINT AS fatal, sum(CASE WHEN event_time >= $3::TIMESTAMP THEN 1 ELSE 0 END)::BIGINT AS recent, sum(CASE WHEN event_time >= $4::TIMESTAMP AND event_time < $3::TIMESTAMP THEN 1 ELSE 0 END)::BIGINT AS previous, min(line_id) AS first_id, max(line_id) AS last_id FROM ${ev.ds.table} WHERE is_alert = true AND event_time >= $1::TIMESTAMP AND event_time < $2::TIMESTAMP GROUP BY label`;
   const { rows, ms } = await query<{ label: string; events: number; nodes: number; days: number; fatal: number; recent: number; previous: number; first_id: number; last_id: number }>(
     sql,
     [from, to, recentStart, previousStart],

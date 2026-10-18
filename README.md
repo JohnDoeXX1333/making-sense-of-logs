@@ -36,6 +36,20 @@ question
 - If BM25 scoring fails, search falls back to exact matching (`SEARCH_MODE=match` forces it); if the LLM fails, the evidence is still returned and the view shows the error.
 - Manager priority: `score = 100 x (0.30 x events + 0.25 x nodes + 0.20 x activeDays + 0.15 x fatalShare + 0.10 x trend)`, each input scaled 0..1 against the largest alert category (events and nodes on a log scale). Trend compares the last quarter of the period with the quarter before.
 
+## Bring your own logs
+
+Upload any line-based log file (up to 50 MB) and get the same investigation on it:
+
+1. The model sees the first 40 lines and writes a parsing pattern (named groups time, level, component, host, message) plus the timestamp format.
+2. The server tests the pattern on the first 2,000 lines inside a worker thread with a time limit. Below 98% matched lines it asks again with the failing lines; with no usable pattern it falls back to whole lines. The user sees the match rate and a preview before anything is loaded.
+3. Every line is loaded into its own SereneDB table and inverted index with the same columns as BGL, so all tools, evidence checks and role views work unchanged. Lines that do not match (for example stack traces) are kept and take the previous line's time.
+4. Alert = level WARNING or worse, or an error keyword when a line has no level. Label = the alert line's message pattern with numbers and ids replaced by `<*>`, so repeats group together.
+5. A dashboard computed by SereneDB alone (lines over time, levels, components, hosts, top alert patterns) opens right away; clicking any bar or pattern shows the raw lines and the SQL. The model also suggests one question per role.
+
+Tested on six public Loghub samples in different formats (HDFS, Linux syslog, Apache, OpenSSH, Zookeeper, Spark): one detection run each on 2026-10-18 matched 100% of lines and parsed 100% of timestamps, in 4 to 9 s (Linux needed a second attempt). Loading 2,000 lines, indexing and suggesting questions took 6 to 7 s. Syslog timestamps have no year, so the upload screen asks for one.
+
+Privacy: the 40-line sample, and later facts and sample lines, go to the language model provider. The upload screen says so; only upload logs you may share with an external AI service.
+
 ## Stack
 
 | Part | Choice |
@@ -58,7 +72,7 @@ cd ../frontend && npm install && npm run dev
 scripts/smoke.sh                       # end-to-end checks against the running backend
 ```
 
-API: `GET /api/health`, `GET /api/examples`, `POST /api/investigate {"question": "..."}` (`?fresh=1` skips the answer cache) and `POST /api/investigate/stream?first=<role>`, which streams newline-delimited JSON events: each finished query, the evidence bundle, then each role view (the selected role first). The contract is in `shared/contract.ts`.
+API: `GET /api/health`, `GET /api/examples`, `GET /api/datasets`, `POST /api/datasets/detect` (text/plain body), `POST /api/datasets/:id/ingest`, `GET /api/datasets/:id/overview`, `GET /api/datasets/:id/lines`, `POST /api/investigate {"question": "..."}` (`?fresh=1` skips the answer cache) and `POST /api/investigate/stream?first=<role>`, which streams newline-delimited JSON events: each finished query, the evidence bundle, then each role view (the selected role first). The contract is in `shared/contract.ts`.
 
 ## Data
 

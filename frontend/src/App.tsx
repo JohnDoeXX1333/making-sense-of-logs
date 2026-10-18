@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { EvidenceBundle, ExampleQuestion, Fact, Finding, Health, InvestigateEvent, InvestigateResponse, LogRow, Role, RoleView, ToolCall } from '../../shared/contract.ts'
+import type { DatasetInfo, EvidenceBundle, Fact, Finding, Health, InvestigateEvent, InvestigateResponse, LogRow, Role, RoleView, ToolCall } from '../../shared/contract.ts'
 import { Chart } from './Chart.tsx'
+import { Overview } from './Overview.tsx'
+import { UploadDialog } from './UploadDialog.tsx'
 
 const ROLES: { id: Role; name: string; hint: string }[] = [
   { id: 'engineer', name: 'Engineer', hint: 'root cause' },
@@ -157,7 +159,7 @@ function Drawer({ content, bundle, onClose }: { content: DrawerContent | null; b
                 <h3 className="section-title">Log lines from SereneDB</h3>
                 <div className="table-wrap">
                   <table className="log-table">
-                    <thead><tr><th scope="col">Line</th><th scope="col">Log time (US Pacific)</th><th scope="col">Node</th><th scope="col">Label</th><th scope="col">Message</th></tr></thead>
+                    <thead><tr><th scope="col">Line</th><th scope="col">Log time</th><th scope="col">Node</th><th scope="col">Label</th><th scope="col">Message</th></tr></thead>
                     <tbody>
                       {rows.map((r) => (
                         <tr key={r.lineId}>
@@ -201,7 +203,9 @@ const STEPS = ['Planning read-only queries', 'Running them on SereneDB', 'Writin
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [healthError, setHealthError] = useState(false)
-  const [examples, setExamples] = useState<ExampleQuestion[]>([])
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([])
+  const [datasetId, setDatasetId] = useState('bgl')
+  const [uploadOpen, setUploadOpen] = useState(false)
   const [question, setQuestion] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [bundle, setBundle] = useState<EvidenceBundle | null>(null)
@@ -219,7 +223,7 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/health').then((r) => (r.ok ? r.json() : Promise.reject())).then(setHealth).catch(() => setHealthError(true))
-    fetch('/api/examples').then((r) => r.json()).then(setExamples).catch(() => setExamples([]))
+    fetch('/api/datasets').then((r) => r.json()).then(setDatasets).catch(() => setDatasets([]))
   }, [])
 
   useEffect(() => {
@@ -246,6 +250,7 @@ export default function App() {
     setFinal(null)
     setDrawer(null)
     setChartIdx(0)
+    document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     const handle = (e: InvestigateEvent) => {
       if (e.type === 'tool') setLiveCalls((c) => [...c, e.call])
       else if (e.type === 'bundle') setBundle(e.bundle)
@@ -258,7 +263,7 @@ export default function App() {
     }
     try {
       // The selected role is written first, so the tab the user is looking at fills in first.
-      const res = await fetch(`/api/investigate/stream?first=${role}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text }) })
+      const res = await fetch(`/api/investigate/stream?first=${role}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, dataset: datasetId }) })
       if (!res.ok || !res.body) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${res.status}`)
@@ -308,6 +313,25 @@ export default function App() {
   }
 
   const b = bundle
+  const dataset = datasets.find((d) => d.id === datasetId)
+  const examples = dataset?.examples ?? []
+
+  function switchDataset(id: string) {
+    setDatasetId(id)
+    setBundle(null)
+    setViews({})
+    setLiveCalls([])
+    setFinal(null)
+    setError('')
+    setQuestion('')
+  }
+
+  function onLoaded(ds: DatasetInfo) {
+    setDatasets((list) => [...list.filter((d) => d.id !== ds.id), ds])
+    setUploadOpen(false)
+    switchDataset(ds.id)
+    requestAnimationFrame(() => document.getElementById('overview')?.scrollIntoView({ behavior: 'smooth' }))
+  }
   const roleName = ROLES.find((r) => r.id === role)!.name
 
   return (
@@ -324,6 +348,7 @@ export default function App() {
           </button>
           <nav className="nav" id="site-nav" aria-label="Sections">
             <a href="#top" onClick={() => setMenuOpen(false)}>Investigate</a>
+            <a href="#overview" onClick={() => setMenuOpen(false)}>Overview</a>
             <a href="#evidence" onClick={() => setMenuOpen(false)}>Evidence</a>
             <a href="#trace" onClick={() => setMenuOpen(false)}>How it was built</a>
           </nav>
@@ -345,9 +370,16 @@ export default function App() {
           <div className="ask-grid">
             <div className="ask-intro">
               <h1 id="page-title">One investigation, three perspectives</h1>
-              <p>Ask about 4.7 million Blue Gene/L log lines. SereneDB finds the evidence and computes the numbers; the agent explains the same evidence for an engineer, a team lead and a manager.</p>
+              <p>Ask about 4.7 million Blue Gene/L log lines, or upload your own logs. SereneDB finds the evidence and computes the numbers; the agent explains the same evidence for an engineer, a team lead and a manager.</p>
             </div>
             <form className="ask-form" onSubmit={onSubmit} noValidate>
+              <div className="dataset-row">
+                <label htmlFor="dataset">Logs</label>
+                <select id="dataset" value={datasetId} onChange={(e) => switchDataset(e.target.value)} disabled={loading}>
+                  {datasets.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.rows.toLocaleString('en-US')} lines)</option>)}
+                </select>
+                <button type="button" className="btn-secondary" onClick={() => setUploadOpen(true)} disabled={loading}>Upload your own logs</button>
+              </div>
               <label htmlFor="question">Your question</label>
               <div className="ask-row">
                 <textarea
@@ -372,7 +404,9 @@ export default function App() {
           </div>
         </section>
 
-        <section className="results container" aria-label="Results">
+        {dataset && <Overview dataset={dataset} key={dataset.id} />}
+
+        <section className="results container" id="results" aria-label="Results">
           <div className="panel" aria-busy={loading}>
             <div className="tabs" role="tablist" aria-label="Perspective">
               {ROLES.map((r, i) => (
@@ -509,11 +543,12 @@ export default function App() {
           <span>Data: Loghub BGL, 4,747,963 lines</span>
           <span>Database: SereneDB 26.10.1</span>
           <span>Model: DeepSeek V4.1 Flash</span>
-          <span>Times are log time (US Pacific)</span>
+          <span>Times are shown as written in the logs (BGL: US Pacific)</span>
         </div>
       </footer>
 
       <Drawer content={drawer} bundle={bundle} onClose={() => setDrawer(null)} />
+      <UploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onLoaded={onLoaded} />
     </>
   )
 }

@@ -55,11 +55,11 @@ export function toLogRow(r: DbLogRow): LogRow {
   };
 }
 
-export async function fetchRows(lineIds: number[]): Promise<LogRow[]> {
+export async function fetchRows(table: string, lineIds: number[]): Promise<LogRow[]> {
   if (lineIds.length === 0) return [];
   const ids = [...new Set(lineIds)].map(Number).filter(Number.isInteger);
   const { rows } = await query<DbLogRow>(
-    `SELECT ${LOG_COLUMNS} FROM bgl_logs WHERE line_id IN (${ids.join(",")}) ORDER BY event_time, line_id`,
+    `SELECT ${LOG_COLUMNS} FROM ${table} WHERE line_id IN (${ids.join(",")}) ORDER BY event_time, line_id`,
   );
   return rows.map(toLogRow);
 }

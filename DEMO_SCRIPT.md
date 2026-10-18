@@ -7,8 +7,8 @@ Total target: 2:50, so there is 10 seconds of buffer. Narration is written for o
 - Backend running (`cd backend && npm start`), frontend running (`cd frontend && npm run dev`), open http://localhost:5173.
 - Browser at 1920x1080, zoom 110 to 125% so text is readable in the video. Close other tabs, hide bookmarks.
 - All 4 example questions are cached, so they open instantly. Only scene 6 runs a new question live.
-- Before scene 6, pick a question that is not cached, for example "Which nodes had the most KERNSERV alerts and when?" Test it once off camera, then use a different wording on camera so it runs fresh.
-- Record with OBS or the system recorder. In the edit, speed up the waiting part of scene 6 and show a small "sped up" label.
+- For scene 6, use data/samples/OpenSSH_2k.log (not uploaded yet). Practise once off camera with a different sample (for example Zookeeper_2k.log) so you know the clicks.
+- Record with OBS or the system recorder. In the edit, speed up the waiting parts of scene 6 and show a small "sped up" label.
 
 ## Scene 1: the problem (0:00 to 0:15)
 
@@ -58,13 +58,19 @@ Screen: click the example "Did the July 11 panics cause customer data loss, and 
 
 Say: "If we ask about customer data loss and cost, the agent does not make something up. The logs have no customer or cost data, and it says so."
 
-## Scene 6: a new question, live (2:00 to 2:30)
+## Scene 6: bring your own logs, live (2:00 to 2:35)
 
-Screen: type the new question and press Investigate. Scroll so the role panel shows the live query list.
+Screen: click "Upload your own logs", drop OpenSSH_2k.log, click "Recognise format".
 
-Say: "Here is a new question, live. You can see each SereneDB query as it finishes, in a few milliseconds each. After about ten seconds the evidence is ready, and the first view arrives a few seconds later, while the other two are still being written."
+Say: "This also works on your own logs. Here is an SSH server log the system has never seen. The model writes a parsing pattern from a few lines, and the server tests it on two thousand lines before anything is loaded." (If the match rate on screen is 100%, add: "Every line matched.")
 
-Edit: speed up the waiting, show "sped up".
+Screen: show the preview table and the match rate, leave the year field as it is, click "Load 2,000 lines into SereneDB". The dashboard opens.
+
+Say: "SereneDB loads and indexes it in seconds. This dashboard is pure SQL, no AI: lines over time, hosts, and the most frequent alert patterns."
+
+Screen: click one bar or the top pattern; the raw lines appear. Then click the suggested Engineer question and let it stream (speed up the wait in the edit).
+
+Say: "Click anything to see the raw lines. And the same three-perspective investigation runs on the new logs, with the same evidence rules."
 
 ## Scene 7: how it was built (2:30 to 2:50)
 
