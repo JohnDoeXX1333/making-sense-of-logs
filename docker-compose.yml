@@ -1,0 +1,15 @@
+services:
+  serenedb:
+    image: serenedb/serenedb:26.10.1
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:${PGPORT:-7890}:7890"
+    environment:
+      POSTGRES_PASSWORD: ${PGPASSWORD:-serene}
+    volumes:
+      - serenedb-data:/var/lib/serenedb
+      - ./data/parquet:/imports:ro
+    restart: unless-stopped
+
+volumes:
+  serenedb-data:

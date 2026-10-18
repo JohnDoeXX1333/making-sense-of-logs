@@ -1,0 +1,6 @@
+data/
+node_modules/
+backend/cache/
+frontend/dist/
+.env
+*.log

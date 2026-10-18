@@ -1,0 +1,74 @@
+{
+  "bundle": {
+    "queryId": "sample-0001",
+    "question": "Investigate the runtime panics around 14:03 on 2005-07-11. What failed and what happened around it?",
+    "facts": [
+      { "id": "F1", "statement": "KERNRTSP 'rts panic' events between 2005-07-11 14:03:00 and 14:04:00", "value": 148, "sourceLineIds": [1996547, 1996548, 1996783], "toolCallId": "T1" },
+      { "id": "F2", "statement": "Distinct midplanes with a panic in that minute", "value": "R01-M0 (80), R05-M1 (34), R04-M0 (34)", "sourceLineIds": [1996547, 1996783], "toolCallId": "T2" },
+      { "id": "F3", "statement": "KERNPOW 'Power deactivated' events on midplane R05-M0 at 14:03:23, 10 s before the first panic", "value": 16, "sourceLineIds": [1996437, 1996438, 1996439], "toolCallId": "T3" },
+      { "id": "F4", "statement": "Earlier KERNPOW events on R05-M0 the same day at 01:50:28", "value": 16, "sourceLineIds": [1994878, 1994879], "toolCallId": "T3" }
+    ],
+    "logs": [
+      { "lineId": 1994878, "time": "2005-07-11 01:50:28.210732", "node": "NULL", "midplane": null, "component": "KERNEL", "level": "FATAL", "label": "KERNPOW", "isAlert": true, "message": "Power deactivated: R05-M0-N4", "rawLine": "KERNPOW 1121071828 2005.07.11 NULL 2005-07-11-01.50.28.210732 NULL RAS KERNEL FATAL Power deactivated: R05-M0-N4" },
+      { "lineId": 1994879, "time": "2005-07-11 01:50:28.217474", "node": "NULL", "midplane": null, "component": "KERNEL", "level": "FATAL", "label": "KERNPOW", "isAlert": true, "message": "Power deactivated: R05-M0-N8", "rawLine": "KERNPOW 1121071828 2005.07.11 NULL 2005-07-11-01.50.28.217474 NULL RAS KERNEL FATAL Power deactivated: R05-M0-N8" },
+      { "lineId": 1996437, "time": "2005-07-11 14:03:23.474016", "node": "NULL", "midplane": null, "component": "KERNEL", "level": "FATAL", "label": "KERNPOW", "isAlert": true, "message": "Power deactivated: R05-M0-N4", "rawLine": "KERNPOW 1121115803 2005.07.11 NULL 2005-07-11-14.03.23.474016 NULL RAS KERNEL FATAL Power deactivated: R05-M0-N4" },
+      { "lineId": 1996438, "time": "2005-07-11 14:03:23.480418", "node": "NULL", "midplane": null, "component": "KERNEL", "level": "FATAL", "label": "KERNPOW", "isAlert": true, "message": "Power deactivated: R05-M0-N8", "rawLine": "KERNPOW 1121115803 2005.07.11 NULL 2005-07-11-14.03.23.480418 NULL RAS KERNEL FATAL Power deactivated: R05-M0-N8" },
+      { "lineId": 1996439, "time": "2005-07-11 14:03:23.483004", "node": "NULL", "midplane": null, "component": "KERNEL", "level": "FATAL", "label": "KERNPOW", "isAlert": true, "message": "Power deactivated: R05-M0-NE", "rawLine": "KERNPOW 1121115803 2005.07.11 NULL 2005-07-11-14.03.23.483004 NULL RAS KERNEL FATAL Power deactivated: R05-M0-NE" },
+      { "lineId": 1996547, "time": "2005-07-11 14:03:33.541092", "node": "R05-M1-N6-C:J05-U01", "midplane": "R05-M1", "component": "KERNEL", "level": "FATAL", "label": "KERNRTSP", "isAlert": true, "message": "rts panic! - stopping execution", "rawLine": "KERNRTSP 1121115813 2005.07.11 R05-M1-N6-C:J05-U01 2005-07-11-14.03.33.541092 R05-M1-N6-C:J05-U01 RAS KERNEL FATAL rts panic! - stopping execution" },
+      { "lineId": 1996548, "time": "2005-07-11 14:03:33.556014", "node": "R05-M1-N6-C:J05-U11", "midplane": "R05-M1", "component": "KERNEL", "level": "FATAL", "label": "KERNRTSP", "isAlert": true, "message": "rts panic! - stopping execution", "rawLine": "KERNRTSP 1121115813 2005.07.11 R05-M1-N6-C:J05-U11 2005-07-11-14.03.33.556014 R05-M1-N6-C:J05-U11 RAS KERNEL FATAL rts panic! - stopping execution" },
+      { "lineId": 1996783, "time": "2005-07-11 14:03:39.318225", "node": "R01-M0-N7-C:J11-U11", "midplane": "R01-M0", "component": "KERNEL", "level": "FATAL", "label": "KERNRTSP", "isAlert": true, "message": "rts panic! - stopping execution", "rawLine": "KERNRTSP 1121115819 2005.07.11 R01-M0-N7-C:J11-U11 2005-07-11-14.03.39.318225 R01-M0-N7-C:J11-U11 RAS KERNEL FATAL rts panic! - stopping execution" }
+    ],
+    "charts": [
+      { "id": "C1", "title": "Alert events per second, 14:03:20 to 14:03:40", "kind": "bar", "x": ["14:03:23", "14:03:33", "14:03:34", "14:03:35", "14:03:36", "14:03:37", "14:03:38", "14:03:39"], "series": [ { "name": "KERNPOW", "values": [16, 0, 0, 0, 0, 0, 0, 0] }, { "name": "KERNRTSP", "values": [0, 20, 22, 18, 21, 23, 24, 20] } ] }
+    ],
+    "toolCalls": [
+      { "id": "T1", "tool": "searchLogs", "args": { "query": "rts panic", "from": "2005-07-11T14:03:00", "to": "2005-07-11T14:04:00" }, "sql": "SELECT ... FROM bgl_idx WHERE message @@ ts_phrase($1) AND event_time BETWEEN $2 AND $3 ORDER BY score DESC, line_id LIMIT 100", "rowCount": 100, "ms": 41 },
+      { "id": "T2", "tool": "aggregate", "args": { "groupBy": "midplane", "label": "KERNRTSP", "from": "2005-07-11T14:03:00", "to": "2005-07-11T14:04:00" }, "sql": "SELECT midplane, count(*) FROM bgl_logs WHERE ... GROUP BY 1 ORDER BY 2 DESC", "rowCount": 3, "ms": 18 },
+      { "id": "T3", "tool": "getContext", "args": { "lineId": 1996547, "beforeSeconds": 60, "afterSeconds": 10, "sameNode": false, "alertsOnly": true }, "sql": "SELECT ... FROM bgl_logs WHERE event_time BETWEEN $1 AND $2 AND is_alert ORDER BY event_time, line_id LIMIT 200", "rowCount": 164, "ms": 22 }
+    ],
+    "unknowns": [
+      "The logs do not state why R05-M0 was powered off or whether it was planned maintenance.",
+      "The logs show the panics followed the power-off by 10 seconds; they do not prove the power-off caused them."
+    ],
+    "searchMode": "bm25"
+  },
+  "views": {
+    "engineer": {
+      "role": "engineer",
+      "headline": "148 rts panics on 3 midplanes, 10 s after R05-M0 was powered off",
+      "summary": "At 14:03:23 midplane R05-M0 logged 16 'Power deactivated' events. From 14:03:33 to 14:03:39, 148 compute nodes on R01-M0, R05-M1 and R04-M0 logged 'rts panic! - stopping execution'. The same power-off pattern occurred on R05-M0 at 01:50 that day.",
+      "findings": [
+        { "claim": "148 nodes hit a fatal runtime panic within 6 seconds.", "evidenceIds": ["F1"], "status": "observed", "confidence": "high" },
+        { "claim": "The panics span three midplanes, none of them R05-M0.", "evidenceIds": ["F2"], "status": "observed", "confidence": "high" },
+        { "claim": "The panics may be a downstream effect of the R05-M0 power-off, for example a partition spanning those midplanes.", "evidenceIds": ["F1", "F3"], "status": "inferred", "confidence": "low" }
+      ],
+      "unknowns": ["Why R05-M0 was powered off.", "Whether the affected nodes ran one job."],
+      "recommendedActions": ["Inspect the job and partition map for R01-M0, R04-M0 and R05-M1 at 14:03.", "Check whether the 01:50 power-off was followed by similar panics."]
+    },
+    "team_lead": {
+      "role": "team_lead",
+      "headline": "Power-off on R05-M0 happened twice on July 11",
+      "summary": "R05-M0 was powered off at 01:50 and again at 14:03. The second event was followed by a burst of runtime panics on three other midplanes.",
+      "findings": [
+        { "claim": "R05-M0 power deactivation recurred the same day.", "evidenceIds": ["F3", "F4"], "status": "observed", "confidence": "high" },
+        { "claim": "The 14:03 burst affected 3 midplanes.", "evidenceIds": ["F2"], "status": "observed", "confidence": "high" }
+      ],
+      "unknowns": ["Owner of the R05 rack is not recorded in the logs."],
+      "recommendedActions": ["Have the hardware team review R05-M0 power events for July 11."]
+    },
+    "manager": {
+      "role": "manager",
+      "headline": "One power event stopped work on 148 nodes",
+      "summary": "Based on the logs, a single power-off was followed within seconds by 148 nodes stopping execution. The logs cannot show customer or cost impact.",
+      "findings": [
+        { "claim": "Work stopped on 148 nodes across 3 midplanes within 6 seconds.", "evidenceIds": ["F1", "F2"], "status": "observed", "confidence": "high" }
+      ],
+      "unknowns": ["Job loss, downtime duration and user impact are not in the logs."],
+      "recommendedActions": ["Prioritize a review of power handling on R05-M0."],
+      "priorities": [
+        { "label": "KERNRTSP", "score": 72, "inputs": { "events": 148, "nodes": 148, "activeDays": 1, "trendPct": null, "fatalShare": 1 }, "factIds": ["F1", "F2"] }
+      ]
+    }
+  },
+  "timings": { "dbMs": 81, "llmMs": 7400, "totalMs": 7520 }
+}
