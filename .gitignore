@@ -5,3 +5,4 @@ frontend/dist/
 .env
 *.log
 demo/out/
+__pycache__/
